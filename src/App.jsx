@@ -1,4 +1,3 @@
-import HRDAssetDetail from './pages/HRDAssetDetail';
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate, useNavigate, Link } from 'react-router-dom';
 import { 
@@ -10,42 +9,16 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import RemoteDesktop from './components/RemoteDesktop';
 import Dashboard from './pages/Dashboard';
-import EnterpriseHub from './pages/EnterpriseHub';
-import HrdHub from './pages/HrdHub';
-import HSEApar from './pages/hse/HSEApar';
-import AparPrintCard from './pages/hse/AparPrintCard';
-import PublicAparDetail from './pages/hse/PublicAparDetail';
-import AparDashboard from './components/AparDashboard';
-import HRDDashboard from './pages/HRDDashboard';
-import HRDAssets from './pages/HRDAssets';
-import HRDMaintenance from './pages/HRDMaintenance';
-import HRDTickets from './pages/HRDTickets';
-import HRDSettings from './pages/HRDSettings';
 import Login from './pages/Login';
 import Assets from './pages/Assets';
 import AssetDetail from './pages/AssetDetail';
 import ICTInventory from './pages/ict/ICTInventory';
-import HRGAInventory from './pages/hrd/HRGAInventory';
-import Employees from './pages/hrd/Employees';
-import PrintIDCard from './pages/hrd/PrintIDCard';
-import PrintBatchIDCard from './pages/hrd/PrintBatchIDCard';
 import DataCenterMonitoring from './pages/DataCenterMonitoring';
 import CctvCenter from './pages/ict/CctvCenter';
 import EndpointLockdown from './pages/ict/EndpointLockdown';
 import BudgetingCenter from './pages/ict/BudgetingCenter';
-
-// HSE Modules
-import HSEDashboard from './pages/hse/HSEDashboard';
-import HSEIncidents from './pages/hse/HSEIncidents';
-import HSEPatrols from './pages/hse/HSEPatrols';
-import HSECAPA from './pages/hse/HSECAPA';
-import HSEHydrant from './pages/hse/HSEHydrant';
-import HSEStatsInput from './pages/hse/HSEStatsInput';
-import HydrantPrintCard from './pages/hse/HydrantPrintCard';
-import PublicHydrantDetail from './pages/hse/PublicHydrantDetail';
 import PublicRoomDashboard from './pages/PublicRoomDashboard';
 import PublicFasilitasDashboard from './pages/PublicFasilitasDashboard';
-import PublicHseDashboard from './pages/PublicHseDashboard';
 
 import MaintenanceSchedule from './pages/MaintenanceSchedule';
 import MaintenanceExecution from './pages/MaintenanceExecution';
@@ -73,7 +46,6 @@ import PublicDashboard from './pages/PublicDashboard';
 import PublicPortal from './pages/PublicPortal';
 import InfraGuard from './pages/ict/InfraGuard';
 import InfraGuardDashboard from './pages/ict/InfraGuardDashboard';
-import HrdPublicPortal from './pages/HrdPublicPortal';
 import RicohServer from './pages/RicohServer';
 import PublicRicohDashboard from './pages/PublicRicohDashboard';
 import SkillMatrix from './pages/admin/SkillMatrix';
@@ -117,13 +89,6 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-// Determine Portal Type: Port 5001 or domain with hr/hrga -> HRGA Portal. Otherwise ICT Portal.
-const isHRPortal = typeof window !== 'undefined' && (
-    window.location.port === '5001' || 
-    window.location.hostname.startsWith('hr') || 
-    window.location.hostname.includes('hrga')
-);
-
 function Layout({ children }) {
     const location = useLocation();
     const navigate = useNavigate();
@@ -142,13 +107,9 @@ function Layout({ children }) {
     });
     const [openDropdowns, setOpenDropdowns] = useState({});
     
-    // Set dynamic document title based on portal
+    // Set dynamic document title for Plant Karawang
     useEffect(() => {
-        if (isHRPortal) {
-            document.title = 'TCF Human Capital & GA - HRGA & HSE Portal';
-        } else {
-            document.title = 'TCF InfraCore - Enterprise Infrastructure & Operations';
-        }
+        document.title = 'TCF InfraCore KG - Enterprise Infrastructure & Operations';
     }, []);
 
     // Reset manual toggle overrides saat pindah halaman agar menu yang aktif otomatis terbuka
@@ -269,39 +230,11 @@ function Layout({ children }) {
         ]},
     ];
 
-    const hrdNavItems = [
-        { path: '/dashboard/hrd', label: 'HRGA Hub', icon: LayoutGrid },
-        { label: 'Assets', icon: Server, subItems: [
-            { path: '/hrd/assets', label: 'Fixed Assets', icon: Server },
-            { path: '/hrd/inventory', label: 'Consumables', icon: Package },
-            { path: '/hrd/assets?tab=sto', label: 'Stock Opname (STO)', icon: FileText },
-        ]},
-        { label: 'Assistance', icon: LifeBuoy, subItems: [
-            { path: '/hrd/tickets', label: 'Tickets', icon: AlertCircle },
-            { path: '/support', label: 'Support Center ICT', icon: LifeBuoy },
-        ]},
-        { label: 'Management', icon: Users, subItems: [
-            { path: '/hrd/employees', label: 'Employees / ID Card', icon: Users },
-            { path: '/hrd/rooms', label: 'Meeting Rooms', icon: CalendarDays },
-        ]},
-        { label: 'Safety', icon: Heart, subItems: [
-            { path: '/hse/dashboard', label: 'HSE Portal', icon: Heart },
-        ]},
-        { label: 'Maintenance', icon: Settings, subItems: [
-            { path: '/hrd/maintenance', label: 'Maintenance', icon: Settings },
-        ]},
-        { label: 'Administration', icon: Shield, subItems: [
-            { path: '/hrd/settings', label: 'Master Data', icon: Shield },
-        ]},
-    ];
+    let navItems = [...ictNavItems];
 
-    // Strict Isolation: HRGA Portal gets hrdNavItems only; ICT Portal gets ictNavItems only.
-    let navItems = isHRPortal ? [...hrdNavItems] : [...ictNavItems];
-
-    // Context-aware home navigation
+    // Home navigation
     const handleHomeClick = () => {
-        if (isHRPortal) navigate('/dashboard/hrd');
-        else navigate('/ict/dashboard');
+        navigate('/ict/dashboard');
     };
 
     return (
@@ -323,28 +256,10 @@ function Layout({ children }) {
             `}>
                 <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800 overflow-hidden whitespace-nowrap bg-white/[0.02]">
                     <div className="flex items-center gap-3">
-                        {isHRPortal ? (
-                            <>
-                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 p-2 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-white shrink-0">
-                                    <Users size={22} className="text-white drop-shadow" />
-                                </div>
-                                <div className={`transition-all ${!isSidebarExpanded ? 'md:hidden' : 'block'}`}>
-                                    <span className="font-black tracking-tight text-xl text-white leading-none block">
-                                        TCF <span className="text-emerald-400">HRGA</span>
-                                    </span>
-                                    <span className="text-[9px] font-bold tracking-[0.2em] text-slate-400 uppercase mt-0.5 block">
-                                        Human Capital & GA
-                                    </span>
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                <img src={infracoreEmblem} alt="InfraCore" className="w-10 h-10 object-contain drop-shadow-md" />
-                                <span className={`font-black tracking-tight text-xl text-white transition-all ${!isSidebarExpanded ? 'md:hidden' : 'block'}`}>
-                                    INFRA<span className="text-cyan-400">CORE</span>
-                                </span>
-                            </>
-                        )}
+                        <img src={infracoreEmblem} alt="InfraCore" className="w-10 h-10 object-contain drop-shadow-md" />
+                        <span className={`font-black tracking-tight text-xl text-white transition-all ${!isSidebarExpanded ? 'md:hidden' : 'block'}`}>
+                            INFRA<span className="text-cyan-400">CORE</span>
+                        </span>
                     </div>
                     <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white transition-colors">
                         <X size={20} />
@@ -618,19 +533,9 @@ function Layout({ children }) {
     );
 }
 
-const ProtectedRoute = ({ children, requireAdmin = false, requireHrd = false, blockKGTech = false }) => {
+const ProtectedRoute = ({ children, requireAdmin = false, blockKGTech = false }) => {
     const user = JSON.parse(sessionStorage.getItem('user') || 'null');
     const location = useLocation();
-
-    // Enforce Strict Boundary between Portals:
-    // When on HRGA portal (port 5001), prevent accessing ICT routes
-    if (isHRPortal && (location.pathname.startsWith('/ict') || requireAdmin)) {
-        return <Navigate to="/dashboard/hrd" replace />;
-    }
-    // When on ICT portal (port 5000), prevent accessing HRD/HSE routes
-    if (!isHRPortal && (location.pathname.startsWith('/hrd') || location.pathname.startsWith('/hse') || location.pathname === '/dashboard/hrd' || requireHrd)) {
-        return <Navigate to="/ict/dashboard" replace />;
-    }
 
     // Bypass Auth for TV Dashboard Link
     if (location.pathname === '/ict/cctv' && location.search.includes('tv=1')) {
@@ -640,13 +545,12 @@ const ProtectedRoute = ({ children, requireAdmin = false, requireHrd = false, bl
     if (!user) {
         let loginType = 'support';
         if (requireAdmin) loginType = 'admin';
-        if (requireHrd || isHRPortal) loginType = 'hrd';
         return <Navigate to={`/login/${loginType}`} state={{ from: location }} replace />;
     }
 
     const role = user.role?.toLowerCase() || '';
     const isSuperAdmin = ['admin', 'administrator', 'super_user', 'superuser'].includes(role);
-    const userOrg = user?.organization || 'TCF-SG';
+    const userOrg = user?.organization || 'TCF-KG';
     const activeOrg = isSuperAdmin ? (sessionStorage.getItem('organization') || userOrg) : userOrg;
     const isTechnician = role === 'technician' || role === 'teknisi' || role.includes('tech') || (activeOrg === 'TCF-KG' && user?.username?.toLowerCase() === 'agung');
     const isKGTechnician = activeOrg === 'TCF-KG' && isTechnician;
@@ -659,10 +563,6 @@ const ProtectedRoute = ({ children, requireAdmin = false, requireHrd = false, bl
         return <Navigate to="/support" replace />;
     }
 
-    if (requireHrd && !isSuperAdmin && !role.startsWith('hrga') && role !== 'hrd') {
-        return <Navigate to="/support" replace />;
-    }
-
     return children;
 };
 
@@ -672,11 +572,10 @@ function App() {
             <Layout>
                 <ErrorBoundary>
                     <Routes>
-                        <Route path="/" element={<Navigate to={isHRPortal ? "/dashboard/hrd" : "/ict/dashboard"} replace />} />
-                        <Route path="/portal" element={<Navigate to={isHRPortal ? "/dashboard/hrd" : "/ict/dashboard"} replace />} />
-                        <Route path="/ict-hub" element={isHRPortal ? <Navigate to="/dashboard/hrd" replace /> : <NexusHub />} />
-                        <Route path="/hrd-hub" element={!isHRPortal ? <Navigate to="/ict/dashboard" replace /> : <HrdHub />} />
-                        <Route path="/nexus" element={<Navigate to={isHRPortal ? "/dashboard/hrd" : "/ict/dashboard"} replace />} />
+                        <Route path="/" element={<Navigate to="/ict/dashboard" replace />} />
+                        <Route path="/portal" element={<Navigate to="/ict/dashboard" replace />} />
+                        <Route path="/ict-hub" element={<NexusHub />} />
+                        <Route path="/nexus" element={<Navigate to="/ict/dashboard" replace />} />
                         <Route path="/login" element={<Login />} />
                         <Route path="/login/:type" element={<Login />} />
 
@@ -689,30 +588,6 @@ function App() {
                         <Route path="/ict/maintenance" element={<ProtectedRoute requireAdmin={true}><MaintenanceSchedule /></ProtectedRoute>} />
                         <Route path="/ict/maintenance/execution/:id" element={<ProtectedRoute requireAdmin={true}><MaintenanceExecution /></ProtectedRoute>} />
                         <Route path="/ict/datacenter" element={<ProtectedRoute requireAdmin={true} blockKGTech={true}><DataCenterMonitoring /></ProtectedRoute>} />
-                        
-                        {/* HR & GA Routes */}
-                        <Route path="/dashboard/hrd" element={<ProtectedRoute requireHrd={true}><HRDDashboard /></ProtectedRoute>} />
-                        <Route path="/hrd/assets" element={<ProtectedRoute requireHrd={true}><HRDAssets /></ProtectedRoute>} />
-                        <Route path="/hrd/assets/:id" element={<ProtectedRoute requireHrd={true}><HRDAssetDetail /></ProtectedRoute>} />
-                        <Route path="/hrd/inventory" element={<ProtectedRoute requireHrd={true}><HRGAInventory /></ProtectedRoute>} />
-                        <Route path="/hrd/employees" element={<ProtectedRoute requireHrd={true}><Employees /></ProtectedRoute>} />
-                        <Route path="/hrd/employees/print/:id" element={<PrintIDCard />} />
-                        <Route path="/hrd/employees/print-batch" element={<PrintBatchIDCard />} />
-                        <Route path="/hrd/maintenance" element={<ProtectedRoute requireHrd={true}><HRDMaintenance /></ProtectedRoute>} />
-                        <Route path="/hrd/rooms" element={<ProtectedRoute requireHrd={true}><Rooms /></ProtectedRoute>} />
-                        <Route path="/hrd/settings" element={<ProtectedRoute requireHrd={true}><HRDSettings /></ProtectedRoute>} />
-                        <Route path="/hrd/tickets" element={<ProtectedRoute requireHrd={true}><HRDTickets /></ProtectedRoute>} />
-
-                        {/* HSE Routes */}
-                        <Route path="/hse/dashboard" element={<ProtectedRoute requireHrd={true}><HSEDashboard /></ProtectedRoute>} />
-                        <Route path="/hse/incidents" element={<ProtectedRoute requireHrd={true}><HSEIncidents /></ProtectedRoute>} />
-                        <Route path="/hse/patrols" element={<ProtectedRoute requireHrd={true}><HSEPatrols /></ProtectedRoute>} />
-                        <Route path="/hse/statistics" element={<ProtectedRoute requireHrd={true}><HSEStatsInput /></ProtectedRoute>} />
-                        <Route path="/hse/capa" element={<ProtectedRoute requireHrd={true}><HSECAPA /></ProtectedRoute>} />
-                        <Route path="/hse/apar" element={<ProtectedRoute requireHrd={true}><HSEApar /></ProtectedRoute>} />
-                        <Route path="/hse/apar/print/:id" element={<AparPrintCard />} />
-                        <Route path="/hse/hydrant" element={<ProtectedRoute requireHrd={true}><HSEHydrant /></ProtectedRoute>} />
-                        <Route path="/hse/hydrant/print/:id" element={<HydrantPrintCard />} />
 
                         {/* ICT Additional Routes */}
                         <Route path="/ict/tickets" element={<ProtectedRoute requireAdmin={true}><Tickets /></ProtectedRoute>} />
@@ -724,9 +599,7 @@ function App() {
                         <Route path="/ict/kpi" element={<Navigate to="/ict/reports" replace />} />
                         <Route path="/ict/ricoh-server" element={<ProtectedRoute requireAdmin={true}><RicohServer /></ProtectedRoute>} />
                         <Route path="/ict/lockdown" element={<ProtectedRoute requireAdmin={true}><EndpointLockdown /></ProtectedRoute>} />
-                        <Route path="/ict/infraguard/*" element={<ProtectedRoute requireAdmin={true} blockKGTech={true}><InfraGuard /></ProtectedRoute>} />
                         <Route path="/ict/cctv" element={<ProtectedRoute requireAdmin={true}><CctvCenter /></ProtectedRoute>} />
-                        <Route path="/ict/infraguard-dashboard" element={<ProtectedRoute requireAdmin={true} blockKGTech={true}><InfraGuardDashboard /></ProtectedRoute>} />
                         <Route path="/ict/remote/:id" element={<ProtectedRoute requireAdmin={true}><RemoteDesktop /></ProtectedRoute>} />
                         <Route path="/ict/admin" element={<ProtectedRoute requireAdmin={true}><Admin /></ProtectedRoute>} />
                         <Route path="/ict/admin/users" element={<ProtectedRoute requireAdmin={true}><UserManagement /></ProtectedRoute>} />
@@ -735,8 +608,6 @@ function App() {
                         <Route path="/ict/admin/divisions" element={<ProtectedRoute requireAdmin={true}><DivisionManagement /></ProtectedRoute>} />
                         <Route path="/ict/admin/database-asset" element={<ProtectedRoute requireAdmin={true}><DatabaseAsset /></ProtectedRoute>} />
                         <Route path="/ict/admin/settings" element={<ProtectedRoute requireAdmin={true}><SystemSettings /></ProtectedRoute>} />
-                        <Route path="/ict/admin/skill-matrix" element={<ProtectedRoute requireAdmin={true} blockKGTech={true}><SkillMatrix /></ProtectedRoute>} />
-                        <Route path="/ict/document-studio" element={<ProtectedRoute requireAdmin={true} blockKGTech={true}><DocumentStudio /></ProtectedRoute>} />
                         <Route path="/ict/admin/documents" element={<ProtectedRoute requireAdmin={true}><DocumentControl /></ProtectedRoute>} />
                         <Route path="/ict/admin/automated-forms" element={<ProtectedRoute requireAdmin={true} blockKGTech={true}><AutomatedForms /></ProtectedRoute>} />
                         <Route path="/ict/glpi/licenses" element={<ProtectedRoute requireAdmin={true}><Licenses /></ProtectedRoute>} />
@@ -752,13 +623,9 @@ function App() {
                         <Route path="/support" element={<ProtectedRoute><SupportCenter /></ProtectedRoute>} />
                         <Route path="/rooms" element={<ProtectedRoute><Rooms /></ProtectedRoute>} />
                         <Route path="/public" element={<PublicPortal />} />
-                        <Route path="/public/hrd" element={<HrdPublicPortal />} />
                         <Route path="/public/dashboard" element={<PublicDashboard />} />
                         <Route path="/public/dashboard/view/:type" element={<PublicDashboard />} />
                         <Route path="/public/dashboard/view/ricoh" element={<PublicRicohDashboard />} />
-                        <Route path="/public/apar" element={<AparDashboard isGuest={true} />} />
-                        <Route path="/public/apar/:code" element={<PublicAparDetail />} />
-                        <Route path="/public/hydrant/:code" element={<PublicHydrantDetail />} />
                         <Route path="/public/rooms" element={<PublicRoomDashboard />} />
                         <Route path="/public/fasilitas" element={<PublicFasilitasDashboard />} />
                         <Route path="/public/hse" element={<PublicHseDashboard />} />

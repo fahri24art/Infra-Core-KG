@@ -1,1 +1,0 @@
-require('dotenv').config(); const db = require('./db'); async function run() { try { const assets = await db('assets').where('name', 'like', '%4O314L4%').orWhere('inventory_number', 'like', '%2023-060%'); console.log(assets); } catch(e) { console.log(e); } finally { process.exit(0); } } run();

@@ -503,9 +503,6 @@ export default function SystemSettings() {
                                             <div className="w-72 flex-shrink-0">
                                                 <WABotCard title="ICT Bot (Cadangan 2)" apiUrl="/api/bot3" color="violet" />
                                             </div>
-                                            <div className="w-72 flex-shrink-0">
-                                                <WABotCard title="HRGA Bot" apiUrl="/api/hrga/bot" color="emerald" />
-                                            </div>
                                         </div>
                                     </div>
                                         <div className="pt-4 mt-4 border-t border-slate-100">
@@ -527,12 +524,6 @@ export default function SystemSettings() {
                                         label="ICT Helpdesk Target (Group / Number)"
                                         value={settings.notifications?.ict_target || ''}
                                         onChange={(v) => handleChange('notifications', 'ict_target', v)}
-                                        placeholder="Misal: 6281220729559 atau 12036304XXXXXX@g.us"
-                                    />
-                                    <SettingsInput
-                                        label="HRGA Helpdesk Target (Group / Number)"
-                                        value={settings.notifications?.hrga_target || ''}
-                                        onChange={(v) => handleChange('notifications', 'hrga_target', v)}
                                         placeholder="Misal: 6281220729559 atau 12036304XXXXXX@g.us"
                                     />
                                     <SettingsInput

@@ -17,8 +17,6 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const http = require('http');
 const glpiRoutes = require('./routes/glpi');
-const hrRoutes = require('./routes/hr');
-const hseRoutes = require('./routes/hse');
 const cors = require('cors');
 
 const fs = require('fs');
@@ -134,56 +132,33 @@ app.use('/api/uploads', express.static(uploadsPath));
 if (db) {
     try {
         // WhatsApp Bot Routers
-        let initWhatsApp = () => Promise.resolve(), initWA_HRGA = () => Promise.resolve();
+        let initWhatsApp = () => Promise.resolve();
         const isWin = process.platform === 'win32';
         const shouldDisableWa = process.env.DISABLE_WA_BOT === 'true' || process.env.WA_IPC_MODE === 'api' || (isWin && process.env.DISABLE_WA_BOT !== 'false');
 
         if (shouldDisableWa) {
-            console.log('[WA] Proxying WA routes to standalone bots on ports 5002 and 5003');
+            console.log('[WA] Proxying WA routes to standalone ICT bot on port 5002');
             
             // ICT Bot Proxies
             app.use('/api/wa-status', createProxyMiddleware({ target: 'http://127.0.0.1:5002/wa-status', changeOrigin: true, ignorePath: true }));
             app.use('/api/wa-restart', createProxyMiddleware({ target: 'http://127.0.0.1:5002/wa-restart', changeOrigin: true, ignorePath: true }));
             
-            app.use('/api/bot2/wa-status', createProxyMiddleware({ target: 'http://127.0.0.1:5003/wa-status', changeOrigin: true, ignorePath: true }));
-            app.use('/api/bot2/wa-restart', createProxyMiddleware({ target: 'http://127.0.0.1:5003/wa-restart', changeOrigin: true, ignorePath: true }));
-            
-            app.use('/api/bot3/wa-status', createProxyMiddleware({ target: 'http://127.0.0.1:5004/wa-status', changeOrigin: true, ignorePath: true }));
-            app.use('/api/bot3/wa-restart', createProxyMiddleware({ target: 'http://127.0.0.1:5004/wa-restart', changeOrigin: true, ignorePath: true }));
-            
-            // Custom fallback handler for Multi-Instance WA Bots
+            // Custom fallback handler for WA Bot
             app.post('/api/send-message', async (req, res) => {
                 const axios = require('axios');
-                const ports = [5002, 5003, 5004];
-                let lastError = null;
-                for (const port of ports) {
-                    try {
-                        const response = await axios.post(`http://127.0.0.1:${port}/send-message`, req.body, { timeout: 8000 });
-                        return res.json(response.data);
-                    } catch (e) {
-                        lastError = e.message;
-                        console.warn(`[WA Fallback] Port ${port} failed:`, e.message);
-                    }
+                try {
+                    const response = await axios.post('http://127.0.0.1:5002/send-message', req.body, { timeout: 8000 });
+                    return res.json(response.data);
+                } catch (e) {
+                    res.status(503).json({ error: 'WhatsApp bot is offline or unreachable', details: e.message });
                 }
-                res.status(503).json({ error: 'All WhatsApp bots are offline or unreachable', details: lastError });
             });
-
-            // HRGA Bot Proxies
-            app.use('/api/hrga/bot/wa-status', createProxyMiddleware({ target: 'http://127.0.0.1:5005/wa-status', changeOrigin: true, ignorePath: true }));
-            app.use('/api/hrga/bot/wa-restart', createProxyMiddleware({ target: 'http://127.0.0.1:5005/wa-restart', changeOrigin: true, ignorePath: true }));
-            app.use('/api/hrga/bot/send-message', createProxyMiddleware({ target: 'http://127.0.0.1:5005/send-message', changeOrigin: true, ignorePath: true }));
         } else {
             try {
                 const { router: waRouter, initWhatsApp: init1 } = require('./whatsapp_bot');
                 initWhatsApp = init1;
-                app.use('/api', waRouter); // Original ICT bot
+                app.use('/api', waRouter); // Standalone ICT bot
             } catch(e) { console.error('[WA] ICT bot disabled:', e.message); }
-
-            try {
-                const { router: waRouterHRGA, initWhatsApp: init2 } = require('./wa_bot_hrga');
-                initWA_HRGA = init2;
-                app.use('/api/hrga/bot', waRouterHRGA);
-            } catch(e) { console.error('[WA] HRGA bot disabled:', e.message); }
         }
 
         // Helper to safely mount routes
@@ -203,12 +178,7 @@ if (db) {
         safeMount(['/api/users', '/api/network/users'], './routes/users');
         
         // Extended Modules
-        safeMount(['/api/hr', '/api/network/hr'], './routes/hr');
-        safeMount(['/api/hr/rooms', '/api/network/hr/rooms'], './routes/rooms');
-        safeMount(['/api/hr/apars', '/api/network/hr/apars'], './routes/apar');
-        safeMount(['/api/hr/hydrants', '/api/network/hr/hydrants'], './routes/hydrant');
         safeMount(['/api/inventory', '/api/network/inventory'], './routes/inventory');
-        safeMount(['/api/hse', '/api/network/hse'], './routes/hse');
         safeMount(['/api/portal', '/api/network/portal'], './routes/portal');
         safeMount(['/api/stats', '/api/network/stats'], './routes/stats');
         safeMount(['/api/departments', '/api/network/departments'], './routes/departments');
@@ -342,7 +312,6 @@ if (db) {
         if (!shouldDisableWa) {
             console.log('[WA] Starting WhatsApp initialization...');
             initWhatsApp().catch(err => console.error('[WA_INIT_ERROR] ICT:', err.message));
-            setTimeout(() => initWA_HRGA().catch(err => console.error('[WA_INIT_ERROR] HRGA:', err.message)), 2000);
         } else {
             console.log(`[WA] WhatsApp Bot initialization skipped (isWin=${isWin}, DISABLE_WA_BOT=${process.env.DISABLE_WA_BOT}, IPC=${process.env.WA_IPC_MODE})`);
         }
@@ -350,8 +319,8 @@ if (db) {
         // --- RICOH BACKGROUND POLLING ---
         const { pollDevice } = require('./services/ricoh_snmp');
         const pollAllDevices = async () => {
-            console.log('[RICOH] Starting Multi-Plant Background Polling...');
-            for (const org of ['TCF-SG', 'TCF-KG']) {
+            console.log('[RICOH] Starting Plant Karawang (KG) Background Polling...');
+            for (const org of ['TCF-KG']) {
                 try {
                     const orgDb = getDb(org);
                     const devices = await orgDb('ricoh_devices').select('*');
