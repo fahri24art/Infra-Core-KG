@@ -51,12 +51,12 @@ echo -e "\n${YELLOW}🗄️ [2/6] Setup Database PostgreSQL Lokal Karawang...${N
 systemctl enable postgresql
 systemctl start postgresql
 
-# Buat user netadmin dan database network_monitor_kg
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER'" | grep -q 1 || \
-sudo -u postgres psql -c "CREATE USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASS' SUPERUSER;"
+# Buat user netadmin dan database network_monitor_kg (dieksekusi dari /tmp agar tidak bentrok izin home user)
+(cd /tmp && sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER'" | grep -q 1 || \
+sudo -u postgres psql -c "CREATE USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASS' SUPERUSER;")
 
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
-sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+(cd /tmp && sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
+sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;")
 
 # Izinkan autentikasi lokal
 PG_HBA=$(find /etc/postgresql/ -name pg_hba.conf | head -n 1)
@@ -70,7 +70,8 @@ fi
 
 echo -e "\n${YELLOW}📥 [3/6] Restore Data Awal Plant Karawang (Aset, User, Tiket)...${NC}"
 if [ -f "$APP_DIR/database/init_network_monitor_kg.sql" ]; then
-    sudo -u postgres psql -d "$DB_NAME" -f "$APP_DIR/database/init_network_monitor_kg.sql" > /dev/null
+    # Menggunakan pipeline cat agar tidak terkena permission denied pada folder /home/tcfkg
+    cat "$APP_DIR/database/init_network_monitor_kg.sql" | (cd /tmp && sudo -u postgres psql -d "$DB_NAME") > /dev/null
     echo -e "${GREEN}✅ Database $DB_NAME berhasil direstore dari init_network_monitor_kg.sql.${NC}"
 else
     echo -e "${RED}⚠️ File database/init_network_monitor_kg.sql tidak ditemukan, database dibiarkan kosong.${NC}"
