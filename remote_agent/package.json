@@ -1,0 +1,25 @@
+{
+  "name": "tcf-remote-agent",
+  "version": "7.05.GOLD",
+  "description": "TCF Remote Desktop Agent - AnyDesk-like remote control",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "install-service": "node install-service.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io-client": "^4.7.2",
+    "systeminformation": "^5.21.15",
+    "robotjs": "^0.6.0",
+    "screenshot-desktop": "^1.15.0",
+    "node-screenshots": "^1.0.4",
+    "axios": "^1.6.0",
+    "wrtc": "^0.4.7"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ]
+}

@@ -1,0 +1,112 @@
+[
+    {
+        "id": 1,
+        "name": "TCFSG-ICT-SP-2024-12-010",
+        "serial": "SN-SP-010",
+        "type": "Computer",
+        "location": "Finance Dept",
+        "model": "Custom Build",
+        "user": "-",
+        "status": "Active"
+    },
+    {
+        "id": 2,
+        "name": "TCFSG-ICT-PC-2021-041",
+        "serial": "SN-HP-041",
+        "type": "Computer",
+        "location": "Accounting",
+        "model": "HP ProDesk 400",
+        "user": "SOLEHUDIN",
+        "status": "Active"
+    },
+    {
+        "id": 3,
+        "name": "TCFSG-ICT-PC-2020-004",
+        "serial": "SN-DELL-004",
+        "type": "Computer",
+        "location": "HR Dept",
+        "model": "Dell Optiplex 3050",
+        "user": "NURUL AENI",
+        "status": "Active"
+    },
+    {
+        "id": 4,
+        "name": "TCFSG-ICT-NB-2024-020",
+        "serial": "SN-ASUS-020",
+        "type": "Notebook",
+        "location": "Marketing",
+        "model": "ASUSTeK VivoBook",
+        "user": "MARKETING-COMMON",
+        "status": "Active"
+    },
+    {
+        "id": 6,
+        "name": "TCFSG-ICT-PC-2021-036",
+        "serial": "SN-ASUS-036",
+        "type": "Computer",
+        "location": "Engineering",
+        "model": "ASUS ExpertCenter",
+        "user": "YANI AHMAD",
+        "status": "Active"
+    },
+    {
+        "id": 7,
+        "name": "TCFSG-ICT-PC-2021-016",
+        "serial": "SN-ASUS-016",
+        "type": "Computer",
+        "location": "Procurement",
+        "model": "ASUS ExpertCenter",
+        "user": "CHANTIKA RE...",
+        "status": "Active"
+    },
+    {
+        "id": 8,
+        "name": "TCFSG-ICT-NB-2025-025",
+        "serial": "SN-HP-025",
+        "type": "Notebook",
+        "location": "Sales",
+        "model": "HP EliteBook",
+        "user": "CHRISANTO ...",
+        "status": "Active"
+    },
+    {
+        "id": 10,
+        "name": "TCFSG-ICT-NB-2023-012",
+        "serial": "SN-DELL-012",
+        "type": "Notebook",
+        "location": "Director",
+        "model": "Dell Latitude 7420",
+        "user": "SETIAWAN D...",
+        "status": "Active"
+    },
+    {
+        "id": 11,
+        "name": "TCFSG-ICT-PC-2021-024",
+        "serial": "SN-ASUS-024",
+        "type": "Computer",
+        "location": "General Affairs",
+        "model": "ASUS ExpertCenter",
+        "user": "DWIASTUTI I...",
+        "status": "Active"
+    },
+    {
+        "id": 101,
+        "name": "TCFSG-ICT-PTR-2024-001",
+        "serial": "SN-PTR-001",
+        "type": "Printer",
+        "location": "Finance Dept",
+        "model": "Epson L3110",
+        "user": "SHARED",
+        "status": "Active"
+    },
+    {
+        "id": 102,
+        "name": "TCFSG-ICT-PTR-2024-005",
+        "serial": "SN-PTR-005",
+        "type": "Printer",
+        "location": "HR Dept",
+        "model": "HP LaserJet Pro",
+        "user": "SHARED",
+        "status": "Active"
+    }
+]

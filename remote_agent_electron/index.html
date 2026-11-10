@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TCF Remote Agent - Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 500px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .form-group input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        .form-group input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        .checkbox-group label {
+            color: #333;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .status {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .status-item:last-child {
+            margin-bottom: 0;
+        }
+        .status-label {
+            color: #666;
+        }
+        .status-value {
+            font-weight: 600;
+            color: #333;
+        }
+        .status-value.online {
+            color: #4caf50;
+        }
+        .status-value.offline {
+            color: #f44336;
+        }
+        .buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+        .btn-success {
+            background: #4caf50;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #45a049;
+        }
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #da190b;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            text-align: center;
+            display: none;
+        }
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            display: block;
+        }
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🖥️ TCF Remote Agent</h1>
+            <p>Configuration v7.06.GOLD</p>
+        </div>
+
+        <div class="form-group">
+            <label for="serverUrl">Server URL</label>
+            <input type="text" id="serverUrl" placeholder="http://your-server:5000">
+        </div>
+
+        <div class="checkbox-group">
+            <input type="checkbox" id="autoStart">
+            <label for="autoStart">Auto-start on Windows boot</label>
+        </div>
+
+        <div class="status">
+            <div class="status-item">
+                <span class="status-label">Agent Status:</span>
+                <span class="status-value" id="agentStatus">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Connection:</span>
+                <span class="status-value" id="connectionStatus">-</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Data Usage Today:</span>
+                <span class="status-value" id="dataUsage">0 MB</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Uptime:</span>
+                <span class="status-value" id="uptime">0h 0m</span>
+            </div>
+        </div>
+
+        <div class="buttons">
+            <button class="btn btn-primary" id="saveBtn">Save Config</button>
+            <button class="btn btn-success" id="startBtn" disabled>Start Agent</button>
+            <button class="btn btn-danger" id="stopBtn" disabled>Stop Agent</button>
+        </div>
+
+        <div class="message" id="message"></div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        const RemoteAgent = require('./agent.js');
+        
+        let agentRunning = false;
+        let startTime = null;
+        let agent = null;
+
+        // Load config on startup
+        async function loadConfig() {
+            const config = await ipcRenderer.invoke('get-config');
+            document.getElementById('serverUrl').value = config.serverUrl;
+            document.getElementById('autoStart').checked = config.autoStart;
+            
+            const status = await ipcRenderer.invoke('get-agent-status');
+            agentRunning = status;
+            updateAgentStatus();
+        }
+
+        // Save config
+        document.getElementById('saveBtn').addEventListener('click', async () => {
+            const config = {
+                serverUrl: document.getElementById('serverUrl').value,
+                autoStart: document.getElementById('autoStart').checked
+            };
+            
+            try {
+                await ipcRenderer.invoke('save-config', config);
+                showMessage('Configuration saved successfully!', 'success');
+                
+                // If agent is running, restart with new config
+                if (agentRunning && agent) {
+                    agent.stop();
+                    agent = new RemoteAgent(config.serverUrl);
+                    agent.start();
+                }
+            } catch (error) {
+                showMessage('Failed to save configuration', 'error');
+            }
+        });
+
+        // Start agent
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            const serverUrl = document.getElementById('serverUrl').value;
+            if (!serverUrl) {
+                showMessage('Please enter server URL', 'error');
+                return;
+            }
+            
+            try {
+                agent = new RemoteAgent(serverUrl);
+                agent.start();
+                
+                agentRunning = true;
+                startTime = new Date();
+                updateAgentStatus();
+                ipcRenderer.send('agent-status-changed', true);
+                showMessage('Agent started!', 'success');
+                
+                document.getElementById('connectionStatus').textContent = 'Connecting...';
+                
+                // Update data usage every 5 seconds
+                setInterval(() => {
+                    if (agent && agent.getStatus()) {
+                        const usage = agent.getTotalDataUsage();
+                        document.getElementById('dataUsage').textContent = `${usage} MB`;
+                    }
+                }, 5000);
+                
+                // Check connection after 2 seconds
+                setTimeout(() => {
+                    if (agent && agent.getStatus()) {
+                        document.getElementById('connectionStatus').textContent = 'Connected';
+                        document.getElementById('connectionStatus').classList.add('online');
+                    } else {
+                        document.getElementById('connectionStatus').textContent = 'Failed';
+                        document.getElementById('connectionStatus').classList.remove('online');
+                    }
+                }, 2000);
+                
+            } catch (error) {
+                showMessage('Failed to start agent: ' + error.message, 'error');
+            }
+        });
+
+        // Stop agent
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            if (agent) {
+                agent.stop();
+            }
+            
+            agentRunning = false;
+            startTime = null;
+            updateAgentStatus();
+            ipcRenderer.send('agent-status-changed', false);
+            showMessage('Agent stopped', 'success');
+            
+            document.getElementById('connectionStatus').textContent = 'Disconnected';
+            document.getElementById('connectionStatus').classList.remove('online');
+        });
+
+        function updateAgentStatus() {
+            const statusEl = document.getElementById('agentStatus');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            
+            if (agentRunning) {
+                statusEl.textContent = 'Running';
+                statusEl.classList.add('online');
+                statusEl.classList.remove('offline');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } else {
+                statusEl.textContent = 'Stopped';
+                statusEl.classList.add('offline');
+                statusEl.classList.remove('online');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function showMessage(text, type) {
+            const msgEl = document.getElementById('message');
+            msgEl.textContent = text;
+            msgEl.className = `message ${type}`;
+            setTimeout(() => {
+                msgEl.className = 'message';
+            }, 3000);
+        }
+
+        // Update uptime
+        setInterval(() => {
+            if (startTime) {
+                const now = new Date();
+                const diff = Math.floor((now - startTime) / 1000);
+                const hours = Math.floor(diff / 3600);
+                const minutes = Math.floor((diff % 3600) / 60);
+                document.getElementById('uptime').textContent = `${hours}h ${minutes}m`;
+            }
+        }, 1000);
+
+        // Listen for agent status changes from main process
+        ipcRenderer.on('agent-start', () => {
+            const serverUrl = document.getElementById('serverUrl').value;
+            if (serverUrl && !agentRunning) {
+                agent = new RemoteAgent(serverUrl);
+                agent.start();
+                agentRunning = true;
+                startTime = new Date();
+                updateAgentStatus();
+            }
+        });
+
+        ipcRenderer.on('agent-stop', () => {
+            if (agent) {
+                agent.stop();
+            }
+            agentRunning = false;
+            startTime = null;
+            updateAgentStatus();
+        });
+
+        // Load config on startup
+        loadConfig();
+    </script>
+</body>
+</html>

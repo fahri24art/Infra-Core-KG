@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # Database PostgreSQL Lokal Karawang
+  postgres_kg:
+    image: postgres:15-alpine
+    container_name: tcf_postgres_kg
+    restart: always
+    environment:
+      POSTGRES_USER: netadmin
+      POSTGRES_PASSWORD: Nevergiveup572*
+      POSTGRES_DB: network_monitor_kg
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_kg:/var/lib/postgresql/data
+      - ./database/init_network_monitor_kg.sql:/docker-entrypoint-initdb.d/init_network_monitor_kg.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netadmin -d network_monitor_kg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend & Frontend TCF InfraCore KG
+  infracore_kg:
+    build: .
+    container_name: tcf_infracore_kg
+    restart: always
+    depends_on:
+      postgres_kg:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      POSTGRES_HOST: postgres_kg
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: netadmin
+      POSTGRES_PASSWORD: Nevergiveup572*
+      POSTGRES_DB: network_monitor_kg
+      DISABLE_WA_BOT: "true"
+    ports:
+      - "5000:5000"
+
+volumes:
+  pgdata_kg:
+    driver: local
+

@@ -1,0 +1,53 @@
+{
+  "name": "power-asset-client",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "deploy": "node deploy_safe.cjs",
+    "deploy:all": "node deploy_safe.cjs --all",
+    "auto-sync": "node auto_sync_daemon.cjs",
+    "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
+    "axios": "^1.13.4",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.3.1",
+    "exceljs": "^4.4.0",
+    "framer-motion": "^12.38.0",
+    "html2canvas": "^1.4.1",
+    "html5-qrcode": "^2.3.8",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-react": "^0.344.0",
+    "mysql2": "^3.23.1",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-quill": "^2.0.0",
+    "react-router-dom": "^6.22.0",
+    "react-signature-canvas": "^1.1.0-alpha.2",
+    "recharts": "^2.12.0",
+    "socket.io-client": "^4.7.4",
+    "ssh2": "^1.17.0",
+    "ssh2-sftp-client": "^12.0.1",
+    "sweetalert2": "^11.26.25",
+    "tailwind-merge": "^3.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.18",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "vite": "^5.1.6"
+  }
+}

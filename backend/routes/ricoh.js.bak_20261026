@@ -1,0 +1,1611 @@
+const express = require('express');
+
+
+const router = express.Router();
+
+
+const db = require('../db');
+
+
+const path = require('path');
+
+
+const fs = require('fs');
+
+
+const { pollDevice } = require('../services/ricoh_snmp');
+
+
+const xlsx = require('xlsx');
+
+
+
+
+
+// Auto Excel generation function for Ricoh Address Book
+
+
+const generateExcelFile = async () => {
+
+
+  try {
+
+
+    const rows = await db('ricoh_device_quotas')
+
+
+      .leftJoin('assets', 'ricoh_device_quotas.computer_name', 'assets.name')
+
+
+      .leftJoin('users', 'assets.user_id', 'users.id')
+
+
+      .leftJoin('ricoh_departments', 'ricoh_device_quotas.department_id', 'ricoh_departments.id')
+
+
+      .select('ricoh_device_quotas.*', 'assets.contact as inventory_contact', 'users.name as inventory_user_name', 'ricoh_departments.name as department_name')
+
+
+      .orderBy('ricoh_device_quotas.computer_name', 'asc');
+
+
+      
+
+
+    const data = rows.map(row => ({
+
+
+      'Computer Name': row.computer_name,
+
+
+      'Employee Name': row.inventory_user_name || row.inventory_contact || '-',
+
+
+      'PIN (User Code)': row.user_code || '',
+
+
+      'B/W Quota': row.monthly_quota_bw || 0,
+
+
+      'Color Quota': row.monthly_quota_color || 0,
+
+
+      'Department': row.department_name || 'Unassigned',
+
+
+      'Status': row.status || 'active'
+
+
+    }));
+
+
+    
+
+
+    const ws = xlsx.utils.json_to_sheet(data);
+
+
+    const wb = xlsx.utils.book_new();
+
+
+    xlsx.utils.book_append_sheet(wb, ws, "Ricoh Quotas");
+
+
+    
+
+
+    const exportDir = path.join(__dirname, '../exports');
+
+
+    if (!fs.existsSync(exportDir)) {
+
+
+      fs.mkdirSync(exportDir, { recursive: true });
+
+
+    }
+
+
+    const filePath = path.join(exportDir, 'ricoh_quotas_report.xlsx');
+
+
+    xlsx.writeFile(wb, filePath);
+
+
+    console.log(`[+] Auto-generated Excel file at: ${filePath}`);
+
+
+  } catch (err) {
+
+
+    console.error('[-] Failed to fetch device quotas for auto-Excel:', err.message);
+
+
+  }
+
+
+};
+
+
+
+
+
+const syncInventoryToDeviceQuotas = async () => {
+
+
+  try {
+
+
+    // Read all computers regardless of has_ricoh_driver flag
+
+
+    const assets = await db('assets')
+
+
+      .whereIn('category', ['Desktop', 'Laptop', 'Computer']);
+
+
+
+
+
+    const validAssets = assets.filter(a => {
+
+
+      if (!a.name || !a.name.trim()) return false;
+
+
+      return true;
+
+
+    });
+
+
+
+
+
+    if (validAssets.length > 0) {
+
+
+      for (const asset of validAssets) {
+
+
+        const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
+
+
+        
+
+
+        // Insert or ignore (PostgreSQL uses ON CONFLICT DO NOTHING)
+
+
+        await db.raw(
+
+
+          `INSERT INTO ricoh_device_quotas (computer_name, ip_address, monthly_quota_bw, current_usage_bw, monthly_quota_color, current_usage_color, lifetime_bw, lifetime_color, user_code, status, asset_id) 
+
+
+           VALUES (?, ?, 1000, 0, 500, 0, 0, 0, ?, 'active', ?)
+
+
+           ON CONFLICT (computer_name) DO NOTHING`,
+
+
+          [asset.name, asset.ip_address || '', randomPin, asset.id]
+
+
+        );
+
+
+
+
+
+        // Ensure asset_id and IP are kept up-to-date
+
+
+        await db('ricoh_device_quotas')
+
+
+          .where('computer_name', asset.name)
+
+
+          .update({
+
+
+            asset_id: asset.id,
+
+
+            ip_address: asset.ip_address || ''
+
+
+          });
+
+
+      }
+
+
+
+
+
+      // ⚠️ DANGEROUS: Removing the aggressive deletion logic.
+
+
+      // Previously, this deleted ALL users if their computer didn't have the GLPI 'has_ricoh_driver' flag,
+
+
+      // which caused "akses ke mesin hilang terus".
+
+
+      // We now keep all existing records. If an admin wants to delete a quota, they do it manually.
+
+
+      // const validNames = validAssets.map(a => a.name);
+
+
+      // await db('ricoh_device_quotas').whereNotIn('computer_name', validNames).del();
+
+
+      await generateExcelFile();
+
+
+    }
+
+
+  } catch (err) {
+
+
+    console.error("Error syncing inventory to device quotas:", err.message);
+
+
+  }
+
+
+};
+
+
+
+
+
+// --- ROUTES ---
+
+
+
+
+
+router.get('/jobs', async (req, res) => {
+
+
+  try {
+
+
+    const limit = req.query.limit || 2000;
+
+
+    const dateStr = req.query.date;
+
+
+
+
+
+    let query = db('ricoh_print_jobs')
+      .distinctOn('ricoh_print_jobs.id')
+
+
+      .leftJoin('assets', function() {
+
+
+        this.on(db.raw('LOWER(TRIM(ricoh_print_jobs.user_name))'), '=', db.raw('LOWER(TRIM(assets.name))'))
+
+
+            .orOn(db.raw('LOWER(TRIM(ricoh_print_jobs.user_name))'), '=', db.raw('LOWER(TRIM(assets.contact))'))
+
+
+            .orOn(db.raw('LOWER(TRIM(ricoh_print_jobs.user_name))'), '=', db.raw("LOWER(TRIM(SPLIT_PART(assets.contact, '@', 1)))"))
+
+
+            .orOn(db.raw("LOWER(TRIM(SPLIT_PART(ricoh_print_jobs.user_name, '@', 1)))"), '=', db.raw("LOWER(TRIM(assets.contact))"))
+
+
+            .orOn(db.raw("LOWER(TRIM(SPLIT_PART(ricoh_print_jobs.user_name, '@', 2)))"), '=', db.raw("LOWER(TRIM(assets.name))"))
+
+
+            .orOn(db.raw('LOWER(TRIM(ricoh_print_jobs.user_name))'), '=', db.raw("LOWER(TRIM(assets.windows_login))"))
+
+
+            .orOn(db.raw('LOWER(TRIM(ricoh_print_jobs.user_name))'), '=', db.raw("LOWER(TRIM(SPLIT_PART(assets.windows_login, ?, 2)))", ['\\']))
+
+
+            .orOn(db.raw("(LENGTH(TRIM(ricoh_print_jobs.user_name)) >= 4 AND assets.contact ILIKE '%' || TRIM(ricoh_print_jobs.user_name) || '%')"))
+            .orOn(db.raw("(LENGTH(TRIM(ricoh_print_jobs.user_name)) >= 4 AND assets.windows_login ILIKE '%' || TRIM(ricoh_print_jobs.user_name) || '%')"))
+      })
+
+
+      .leftJoin('ricoh_device_quotas', function() {
+
+
+        this.on('ricoh_print_jobs.user_name', '=', 'ricoh_device_quotas.computer_name')
+
+
+            .orOn('assets.name', '=', 'ricoh_device_quotas.computer_name')
+
+
+      })
+
+
+      .leftJoin('users', 'assets.user_id', 'users.id')
+
+
+      .leftJoin('ricoh_devices', 'ricoh_print_jobs.printer_ip', 'ricoh_devices.ip')
+
+
+      .select(
+
+
+        'ricoh_print_jobs.*', 
+
+
+        'ricoh_device_quotas.user_code as pin_code',
+
+        'assets.id as asset_id',
+        'assets.user_id as employee_id',
+
+
+        'users.name as employee_name',
+
+
+        'assets.contact as inventory_contact',
+
+
+        'assets.name as asset_computer_name',
+
+
+        'ricoh_devices.name as printer_name',
+        db.raw(`
+          CASE 
+            WHEN LOWER(TRIM(ricoh_print_jobs.user_name)) = LOWER(TRIM(SPLIT_PART(assets.windows_login, ?, 2))) THEN 1
+            WHEN LOWER(TRIM(ricoh_print_jobs.user_name)) = LOWER(TRIM(assets.windows_login)) THEN 2
+            WHEN LOWER(TRIM(ricoh_print_jobs.user_name)) = LOWER(TRIM(assets.name)) THEN 3
+            ELSE 4
+          END as match_priority
+        `, ['\\'])
+      )
+      .orderBy('ricoh_print_jobs.id', 'desc')
+      .orderBy('match_priority', 'asc')
+      .orderBy('ricoh_print_jobs.created_at', 'desc');
+
+
+
+
+
+    if (dateStr) {
+
+
+      // Create a start and end of day for the given date
+
+
+      const startOfDay = new Date(dateStr);
+
+
+      startOfDay.setHours(0, 0, 0, 0);
+
+
+      
+
+
+      const endOfDay = new Date(dateStr);
+
+
+      endOfDay.setHours(23, 59, 59, 999);
+
+
+      
+
+
+      query = query.whereBetween('ricoh_print_jobs.created_at', [startOfDay, endOfDay]);
+
+
+    } else {
+
+
+      query = query.limit(limit);
+
+
+    }
+
+
+
+
+
+    const rows = await query;
+
+
+    res.json(rows);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/devices', async (req, res) => {
+
+
+  try {
+
+
+    const rows = await db('ricoh_devices').select('*');
+
+
+    res.json(rows);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.post('/devices', async (req, res) => {
+
+
+  try {
+
+
+    const { name, ip, model } = req.body;
+
+
+    const [id] = await db('ricoh_devices').insert({
+
+
+      name, ip, model: model || 'Ricoh', status: 'online'
+
+
+    }).returning('id');
+
+
+    res.json({ id: id?.id || id, message: 'Device added successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.delete('/devices/:id', async (req, res) => {
+
+
+  try {
+
+
+    await db('ricoh_devices').where('id', req.params.id).del();
+
+
+    res.json({ message: 'Device deleted successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/users', async (req, res) => {
+
+
+  try {
+
+
+    const rows = await db('ricoh_users').select('*');
+
+
+    res.json(rows);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.post('/users', async (req, res) => {
+
+
+  try {
+
+
+    const { name, department, monthly_quota } = req.body;
+
+
+    const [id] = await db('ricoh_users').insert({
+
+
+      name, department, monthly_quota: monthly_quota || 1000
+
+
+    }).returning('id');
+
+
+    res.json({ id: id?.id || id, message: 'User added successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.delete('/users/:id', async (req, res) => {
+
+
+  try {
+
+
+    await db('ricoh_users').where('id', req.params.id).del();
+
+
+    res.json({ message: 'User deleted successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+// --- DEPARTMENTS ---
+
+
+
+
+
+router.get('/departments', async (req, res) => {
+
+
+  try {
+
+
+    const result = await db.raw(`
+
+
+      SELECT d.id, d.name, d.monthly_quota_bw, d.monthly_quota_color, d.created_at,
+
+
+             COALESCE(SUM(q.current_usage_bw), 0) as current_usage_bw,
+
+
+             COALESCE(SUM(q.current_usage_color), 0) as current_usage_color,
+
+
+             COUNT(q.id) as device_count
+
+
+      FROM ricoh_departments d
+
+
+      LEFT JOIN ricoh_device_quotas q ON d.id = q.department_id
+
+
+      GROUP BY d.id
+
+
+      ORDER BY d.name ASC
+
+
+    `);
+
+
+    res.json(result.rows || result);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.post('/departments', async (req, res) => {
+
+
+  try {
+
+
+    const { name, monthly_quota_bw, monthly_quota_color } = req.body;
+
+
+    const [id] = await db('ricoh_departments').insert({
+
+
+      name, 
+
+
+      monthly_quota_bw: monthly_quota_bw || 10000, 
+
+
+      monthly_quota_color: monthly_quota_color || 5000
+
+
+    }).returning('id');
+
+
+    res.json({ id: id?.id || id, message: 'Department added successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.put('/departments/:id/quota', async (req, res) => {
+
+
+  try {
+
+
+    const { monthly_quota_bw, monthly_quota_color, name } = req.body;
+
+
+    const updated = await db('ricoh_departments').where('id', req.params.id).update({
+
+
+      monthly_quota_bw, monthly_quota_color, name
+
+
+    });
+
+
+    res.json({ updated });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.put('/departments/:id/devices', async (req, res) => {
+
+
+  try {
+
+
+    const { device_ids } = req.body;
+
+
+    // First, unassign all devices currently assigned to this department
+
+
+    await db('ricoh_device_quotas').where('department_id', req.params.id).update({ department_id: null });
+
+
+    
+
+
+    // Then, assign the selected devices
+
+
+    if (device_ids && device_ids.length > 0) {
+
+
+      await db('ricoh_device_quotas').whereIn('id', device_ids).update({ department_id: req.params.id });
+
+
+    }
+
+
+    
+
+
+    res.json({ message: 'Devices assigned successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.delete('/departments/:id', async (req, res) => {
+
+
+  try {
+
+
+    await db('ricoh_departments').where('id', req.params.id).del();
+
+
+    // Also set department_id to NULL for linked devices
+
+
+    await db('ricoh_device_quotas').where('department_id', req.params.id).update({ department_id: null });
+
+
+    res.json({ message: 'Department deleted successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/public/printers', async (req, res) => {
+
+
+  try {
+
+
+    const rows = await db('ricoh_devices').select('id', 'name', 'ip', 'model', 'status').where('status', 'online');
+
+
+    res.json(rows);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.post('/public/select-printer', async (req, res) => {
+
+
+  try {
+
+
+    const { user_id, printer_id } = req.body;
+
+
+    await db('ricoh_users').where('id', user_id).update({ current_printer_id: printer_id });
+
+
+    res.json({ message: 'Target printer updated' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/logs', async (req, res) => {
+
+
+  try {
+
+
+    const ninetyDaysAgo = new Date();
+
+
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+
+    
+
+
+    const rows = await db('ricoh_system_logs')
+
+
+      .select('*')
+
+
+      .where('timestamp', '>=', ninetyDaysAgo)
+
+
+      .orderBy('timestamp', 'desc')
+
+
+      .limit(15000); // safety cap
+
+
+    res.json(rows);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.put('/users/:id/status', async (req, res) => {
+
+
+  try {
+
+
+    const { status } = req.body;
+
+
+    await db('ricoh_users').where('id', req.params.id).update({ status });
+
+
+    res.json({ message: `User status updated to ${status}` });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.put('/users/:id/quota', async (req, res) => {
+
+
+  try {
+
+
+    const { monthly_quota } = req.body;
+
+
+    const updated = await db('ricoh_users').where('id', req.params.id).update({ monthly_quota });
+
+
+    res.json({ updated });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/devices/quotas', async (req, res) => {
+
+
+  try {
+
+
+    await syncInventoryToDeviceQuotas();
+
+
+    const uniqueAssets = db('assets')
+      .distinctOn('name')
+      .orderBy('name')
+      .orderBy('id', 'desc')
+      .as('unique_assets');
+
+    const rows = await db('ricoh_device_quotas')
+      .leftJoin(uniqueAssets, 'ricoh_device_quotas.computer_name', 'unique_assets.name')
+      .leftJoin('users', 'unique_assets.user_id', 'users.id')
+      .leftJoin('ricoh_departments', 'ricoh_device_quotas.department_id', 'ricoh_departments.id')
+      .select('ricoh_device_quotas.*', 'unique_assets.contact as inventory_contact', 'users.name as inventory_user_name', 'ricoh_departments.name as department_name');
+
+
+    res.json(rows);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.post('/devices/quotas', async (req, res) => {
+
+
+  try {
+
+
+    const { computer_name, ip_address, monthly_quota_bw, monthly_quota_color, user_code, department_id } = req.body;
+
+
+    const pin = user_code || Math.floor(1000 + Math.random() * 9000).toString();
+
+
+    const [id] = await db('ricoh_device_quotas').insert({
+
+
+      computer_name, ip_address: ip_address || '', 
+
+
+      monthly_quota_bw: monthly_quota_bw || 1000, 
+
+
+      monthly_quota_color: monthly_quota_color || 500,
+
+
+      current_usage_bw: 0, current_usage_color: 0,
+
+
+      user_code: pin, department_id: department_id || null
+
+
+    }).returning('id');
+
+
+    await generateExcelFile();
+
+
+    res.json({ id: id?.id || id, message: 'Device quota registered successfully', user_code: pin });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.put('/devices/quotas/:id/quota', async (req, res) => {
+  try {
+    const { monthly_quota_bw, monthly_quota_color, user_code, department_id } = req.body;
+
+    const targetDevice = await db('ricoh_device_quotas').where('id', req.params.id).first();
+    if (!targetDevice) return res.status(404).json({ error: "Device not found" });
+
+    // Check if the new user_code is different and already belongs to another device
+    if (user_code && user_code !== targetDevice.user_code) {
+        const otherDevice = await db('ricoh_device_quotas').where('user_code', user_code).first();
+        if (otherDevice) {
+            // SWAP their usage data and their PINs
+            await db('ricoh_device_quotas').where('id', targetDevice.id).update({
+                user_code: otherDevice.user_code,
+                current_usage_bw: otherDevice.current_usage_bw,
+                current_usage_color: otherDevice.current_usage_color,
+                current_usage_copier_bw: otherDevice.current_usage_copier_bw,
+                current_usage_copier_color: otherDevice.current_usage_copier_color,
+                lifetime_bw: otherDevice.lifetime_bw,
+                lifetime_color: otherDevice.lifetime_color,
+                lifetime_copier_bw: otherDevice.lifetime_copier_bw,
+                lifetime_copier_color: otherDevice.lifetime_copier_color,
+                monthly_quota_bw: monthly_quota_bw,
+                monthly_quota_color: monthly_quota_color,
+                department_id: department_id || null
+            });
+
+            await db('ricoh_device_quotas').where('id', otherDevice.id).update({
+                user_code: targetDevice.user_code,
+                current_usage_bw: targetDevice.current_usage_bw,
+                current_usage_color: targetDevice.current_usage_color,
+                current_usage_copier_bw: targetDevice.current_usage_copier_bw,
+                current_usage_copier_color: targetDevice.current_usage_copier_color,
+                lifetime_bw: targetDevice.lifetime_bw,
+                lifetime_color: targetDevice.lifetime_color,
+                lifetime_copier_bw: targetDevice.lifetime_copier_bw,
+                lifetime_copier_color: targetDevice.lifetime_copier_color
+            });
+
+            await generateExcelFile();
+            return res.json({ updated: 2, swapped: true });
+        }
+    }
+
+    const updated = await db('ricoh_device_quotas').where('id', req.params.id).update({
+      monthly_quota_bw, monthly_quota_color, user_code, department_id: department_id || null
+    });
+
+    await generateExcelFile();
+
+    res.json({ updated });
+
+  } catch (err) {
+
+    res.status(500).json({ error: err.message });
+
+  }
+
+});
+
+
+
+
+
+router.put('/devices/quotas/:id/status', async (req, res) => {
+
+
+  try {
+
+
+    const { status } = req.body;
+
+
+    await db('ricoh_device_quotas').where('id', req.params.id).update({ status });
+
+
+    res.json({ message: `Device status updated to ${status}` });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.delete('/devices/quotas/:id', async (req, res) => {
+
+
+  try {
+
+
+    await db('ricoh_device_quotas').where('id', req.params.id).del();
+
+
+    await generateExcelFile();
+
+
+    res.json({ message: 'Device quota policy deleted successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.post('/devices/quotas/reset-all', async (req, res) => {
+
+
+  try {
+
+
+    await db('ricoh_device_quotas').update({ current_usage_bw: 0, current_usage_color: 0, current_usage_copier_bw: 0, current_usage_copier_color: 0, last_reset: db.fn.now() });
+
+
+    await db('ricoh_system_logs').insert({ event_type: 'QUOTA_RESET', message: 'All device print quotas were reset.' });
+
+
+    await generateExcelFile();
+
+
+    res.json({ message: 'All device print quotas reset successfully' });
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/devices/quotas/export-excel', async (req, res) => {
+
+
+  try {
+
+
+    const uniqueAssets = db('assets')
+      .distinctOn('name')
+      .orderBy('name')
+      .orderBy('id', 'desc')
+      .as('unique_assets');
+
+    const rows = await db('ricoh_device_quotas')
+      .leftJoin('assets', 'ricoh_device_quotas.asset_id', 'assets.id')
+      .leftJoin('users', 'assets.user_id', 'users.id')
+      .leftJoin('ricoh_departments', 'ricoh_device_quotas.department_id', 'ricoh_departments.id')
+      .select('ricoh_device_quotas.*', 'assets.contact as inventory_contact', 'users.name as inventory_user_name', 'ricoh_departments.name as department_name')
+      .orderBy('ricoh_device_quotas.computer_name', 'asc');
+
+
+      
+
+
+    const data = rows.map(row => ({
+
+
+      'Computer Name': row.computer_name,
+
+
+      'Employee Name': row.inventory_user_name || row.inventory_contact || '-',
+
+
+      'PIN (User Code)': row.user_code || '',
+
+
+      'B/W Quota': row.monthly_quota_bw || 0,
+
+
+      'Color Quota': row.monthly_quota_color || 0,
+
+
+      'Department': row.department_name || 'Unassigned',
+
+
+      'Status': row.status || 'active'
+
+
+    }));
+
+
+    
+
+
+    const ws = xlsx.utils.json_to_sheet(data);
+
+
+    const wb = xlsx.utils.book_new();
+
+
+    xlsx.utils.book_append_sheet(wb, ws, "Ricoh Quotas");
+
+
+    
+
+
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+
+    
+
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+
+    res.setHeader('Content-Disposition', 'attachment; filename="ricoh_quotas_report.xlsx"');
+
+
+    res.status(200).send(buffer);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+router.get('/devices/status', async (req, res) => {
+
+
+  try {
+
+
+    // Get latest toner log for each device using PostgreSQL features (DISTINCT ON is standard for this in PG)
+
+
+    const result = await db.raw(`
+
+
+      SELECT d.id, d.name, d.ip, d.model, d.status,
+
+
+             t.cyan, t.magenta, t.yellow, t.black, t.timestamp
+
+
+      FROM ricoh_devices d
+
+
+      LEFT JOIN (
+
+
+        SELECT DISTINCT ON (device_id) device_id, cyan, magenta, yellow, black, timestamp
+
+
+        FROM ricoh_toner_logs
+
+
+        ORDER BY device_id, timestamp DESC
+
+
+      ) t ON d.id = t.device_id
+
+
+    `);
+
+
+    res.json(result.rows || result);
+
+
+  } catch (err) {
+
+
+    res.status(500).json({ error: err.message });
+
+
+  }
+
+
+});
+
+
+
+
+
+
+
+
+
+
+
+router.get('/monthly-stats', async (req, res) => {
+  try {
+    const active = await db('ricoh_device_quotas').sum({ bw: 'current_usage_bw', color: 'current_usage_color', cbw: 'current_usage_copier_bw', ccolor: 'current_usage_copier_color' }).first();
+    
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    const prevMonthStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    let lastM = await db('ricoh_monthly_usage').where('month', prevMonthStr).sum({ bw: 'bw_usage', color: 'color_usage', cbw: 'copier_bw_usage', ccolor: 'copier_color_usage' }).first();
+    if (!lastM || (!Number(lastM.bw) && !Number(lastM.color) && !Number(lastM.cbw) && !Number(lastM.ccolor))) {
+      lastM = await db('ricoh_daily_usage')
+        .where('date', 'like', `${prevMonthStr}%`)
+        .sum({ bw: 'bw_usage', color: 'color_usage', cbw: 'copier_bw_usage', ccolor: 'copier_color_usage' })
+        .first();
+    }
+    
+    const thisYearStr = new Date().getFullYear() + '-%';
+    const thisY = await db('ricoh_monthly_usage').where('month', 'like', thisYearStr).sum({ bw: 'bw_usage', color: 'color_usage', cbw: 'copier_bw_usage', ccolor: 'copier_color_usage' }).first();
+    
+    res.json({
+        thisMonth: { 
+            bw: Number(active?.bw) || 0, color: Number(active?.color) || 0,
+            cbw: Number(active?.cbw) || 0, ccolor: Number(active?.ccolor) || 0
+        },
+        lastMonth: { 
+            bw: Number(lastM?.bw) || 0, color: Number(lastM?.color) || 0,
+            cbw: Number(lastM?.cbw) || 0, ccolor: Number(lastM?.ccolor) || 0
+        },
+        thisYear: { 
+            bw: (Number(thisY?.bw) || 0) + (Number(active?.bw) || 0), 
+            color: (Number(thisY?.color) || 0) + (Number(active?.color) || 0),
+            cbw: (Number(thisY?.cbw) || 0) + (Number(active?.cbw) || 0), 
+            ccolor: (Number(thisY?.ccolor) || 0) + (Number(active?.ccolor) || 0)
+        }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/monthly-logs', async (req, res) => {
+  try {
+    const currentMonthStr = new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0');
+    
+    const currentRows = await db('ricoh_daily_usage')
+      .leftJoin('ricoh_departments', 'ricoh_daily_usage.department_id', 'ricoh_departments.id')
+      .leftJoin('assets', 'ricoh_daily_usage.computer_name', 'assets.name')
+      .leftJoin('users', 'assets.user_id', 'users.id')
+      .select(
+        'ricoh_daily_usage.computer_name', 
+        'ricoh_daily_usage.user_code', 
+        'ricoh_departments.name as department_name',
+        'users.name as inventory_user_name',
+        'assets.contact as inventory_contact'
+      )
+      .sum('ricoh_daily_usage.bw_usage as bw_usage')
+      .sum('ricoh_daily_usage.color_usage as color_usage')
+      .sum('ricoh_daily_usage.copier_bw_usage as copier_bw_usage')
+      .sum('ricoh_daily_usage.copier_color_usage as copier_color_usage')
+      .where('ricoh_daily_usage.date', 'like', `${currentMonthStr}%`)
+      .groupBy(
+        'ricoh_daily_usage.computer_name',
+        'ricoh_daily_usage.user_code',
+        'ricoh_departments.name',
+        'users.name',
+        'assets.contact'
+      );
+      
+    const formattedCurrentRows = currentRows
+      .filter(r => (Number(r.bw_usage) + Number(r.color_usage) + Number(r.copier_bw_usage) + Number(r.copier_color_usage)) > 0)
+      .map(r => ({
+        ...r,
+        id: 'curr_' + r.computer_name,
+        month: currentMonthStr + ' (Current)'
+      }));
+    
+    const historicalRows = await db('ricoh_monthly_usage')
+      .leftJoin('ricoh_departments', 'ricoh_monthly_usage.department_id', 'ricoh_departments.id')
+      .leftJoin('ricoh_device_quotas', 'ricoh_monthly_usage.computer_name', 'ricoh_device_quotas.computer_name')
+      .leftJoin('assets', function() {
+        this.on('ricoh_device_quotas.asset_id', '=', 'assets.id')
+            .orOn('ricoh_monthly_usage.computer_name', '=', 'assets.name');
+      })
+      .leftJoin('users', 'assets.user_id', 'users.id')
+      .select(
+        'ricoh_monthly_usage.*', 
+        'ricoh_departments.name as department_name',
+        'users.name as inventory_user_name',
+        'assets.contact as inventory_contact'
+      )
+      .orderBy('ricoh_monthly_usage.month', 'desc')
+      .orderBy('ricoh_monthly_usage.bw_usage', 'desc');
+      
+    res.json([...formattedCurrentRows, ...historicalRows]);
+  } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/custom-range-logs', async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ error: 'Missing start or end date' });
+
+    const rows = await db('ricoh_daily_usage')
+      .leftJoin('ricoh_departments', 'ricoh_daily_usage.department_id', 'ricoh_departments.id')
+      .leftJoin('assets', 'ricoh_daily_usage.computer_name', 'assets.name')
+      .leftJoin('users', 'assets.user_id', 'users.id')
+      .select(
+        'ricoh_daily_usage.computer_name', 
+        'ricoh_daily_usage.user_code', 
+        'ricoh_departments.name as department_name',
+        'users.name as inventory_user_name',
+        'assets.contact as inventory_contact'
+      )
+      .sum('ricoh_daily_usage.bw_usage as bw_usage')
+      .sum('ricoh_daily_usage.color_usage as color_usage')
+      .sum('ricoh_daily_usage.copier_bw_usage as copier_bw_usage')
+      .sum('ricoh_daily_usage.copier_color_usage as copier_color_usage')
+      .where('ricoh_daily_usage.date', '>=', start)
+      .where('ricoh_daily_usage.date', '<=', end)
+      .groupBy(
+        'ricoh_daily_usage.computer_name',
+        'ricoh_daily_usage.user_code',
+        'ricoh_departments.name',
+        'users.name',
+        'assets.contact'
+      );
+      
+    // Format them to match the expected frontend structure
+    const formattedRows = rows.map(r => ({
+      ...r,
+      month: `${start} to ${end}`,
+      id: `custom_${r.computer_name}`
+    })).filter(r => (Number(r.bw_usage) + Number(r.color_usage) + Number(r.copier_bw_usage) + Number(r.copier_color_usage)) > 0);
+    
+    res.json(formattedRows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// POST /api/ricoh/assign-user - Shortcut to assign an unmapped PC name to a user
+router.post('/assign-user', async (req, res) => {
+    try {
+        const { rawId, assetId, userId } = req.body;
+        if (!rawId || !assetId || !userId) {
+            return res.status(400).json({ error: 'Missing rawId, assetId, or userId' });
+        }
+
+        // Clear any existing mapping for this rawId from other assets (Disabled to allow 1 User -> Many PCs)
+        // await db('assets')
+        //     .whereRaw('LOWER(TRIM(contact)) = ?', [rawId.trim().toLowerCase()])
+        //     .whereNot('id', assetId)
+        //     .update({ contact: null, updated_at: new Date() });
+
+        // Map the selected asset
+        const asset = await db('assets').where('id', assetId).first();
+        if (!asset) {
+            return res.status(404).json({ error: 'Asset not found' });
+        }
+
+        const trimmedRaw = rawId.trim();
+        let newContact = asset.contact && asset.contact !== 'Unassigned'
+            ? (asset.contact.toLowerCase().includes(trimmedRaw.toLowerCase()) ? asset.contact : `${asset.contact}, ${trimmedRaw}`)
+            : `${trimmedRaw}@${asset.name}`;
+
+        let newWindowsLogin = asset.windows_login
+            ? (asset.windows_login.toLowerCase().includes(trimmedRaw.toLowerCase()) ? asset.windows_login : `${asset.windows_login}, ${asset.name}\\${trimmedRaw}`)
+            : `${asset.name}\\${trimmedRaw}`;
+
+        await db('assets').where('id', assetId).update({ 
+            user_id: userId, 
+            contact: newContact,
+            windows_login: newWindowsLogin,
+            updated_at: new Date() 
+        });
+
+        // Also check if ricoh_device_quotas has a quota record for this rawId or asset
+        const existingQuota = await db('ricoh_device_quotas')
+            .whereRaw('LOWER(TRIM(computer_name)) = ?', [trimmedRaw.toLowerCase()])
+            .first();
+
+        if (existingQuota) {
+            await db('ricoh_device_quotas').where('id', existingQuota.id).update({
+                asset_id: assetId
+            });
+        }
+        
+        return res.json({ message: 'Asset mapped successfully' });
+    } catch (err) {
+        console.error('[RICOH] Assign User Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+module.exports = router;

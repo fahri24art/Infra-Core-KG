@@ -1,0 +1,107 @@
+================================================================================
+          DOKUMEN INTEGRASI INFRASTRUKTUR & DRAFT KREDENSIAL APLIKASI TCF
+                          PT. TRI CENTRUM FORTUNA
+================================================================================
+
+--------------------------------------------------------------------------------
+1. WAZUH XDR / SIEM SECURITY DASHBOARD
+--------------------------------------------------------------------------------
+• LAN URL         : https://192.168.1.3:8443
+• Public URL      : https://dashboard.tricentrumfortuna.com
+• REST API Port   : https://192.168.1.3:55000
+• Agent Telemetry : 192.168.1.3 (Port 1514 TCP/UDP)
+• Agent Register  : 192.168.1.3 (Port 1515 TCP)
+
+[Kredensial Default Wazuh Dashboard]
+• Username        : admin
+• Password Opsi 1 : admin
+• Password Opsi 2 : wazuh
+• Password Opsi 3 : nevergiveup
+• Password Opsi 4 : Tcf@2024 (atau Tcf@2025 / Tcf@2026)
+• Password Opsi 5 : SecretPassword123!
+
+
+--------------------------------------------------------------------------------
+2. POWERASSET (ASSET MANAGEMENT & REMOTE CONTROL)
+--------------------------------------------------------------------------------
+• LAN URL         : http://192.168.1.66:5000
+• Public URL      : http://server.tricentrumfortuna.com:66
+• Domain HTTPS    : https://aset.tricentrumfortuna.com
+• Database        : PostgreSQL (Port 5432)
+  - DB User       : netadmin
+  - DB Password   : secure_net_pass
+  - DB Name SG    : network_monitor_db
+  - DB Name KG    : network_monitor_kg
+
+[Kredensial Login Admin]
+• Username / Email: admin@tricentrumfortuna.com (atau TCFSG Administrator)
+• Password Default: admin123 (atau nevergiveup)
+
+
+--------------------------------------------------------------------------------
+3. INFRA GUARD UNIFIED SECURITY & NETWORK COMMAND CENTER
+--------------------------------------------------------------------------------
+• LAN URL         : http://192.168.1.3
+• Public URL      : https://security.tricentrumfortuna.com
+• Hardware Router : MikroTik CCR2116-12G-4S+ (IP: 192.168.1.3)
+
+[Kredensial Admin]
+• Username        : admin (atau Infra Guard Admin)
+• Password        : nevergiveup (atau Tcf@2024 / Tcf@2025 / Tcf@2026)
+
+
+--------------------------------------------------------------------------------
+4. RUSTDESK REMOTE DESKTOP SERVER
+--------------------------------------------------------------------------------
+• Server Host     : server.tricentrumfortuna.com
+• Public Key      : goI0tPWvahAVECQtsTDn2O2ongsTDSuXG1qIExA8lP4=
+• Service Status  : Active (PM2: rustdesk-hbbs, rustdesk-hbbr di 192.168.1.66)
+
+
+--------------------------------------------------------------------------------
+5. SISTEM INTERNAL LAINNYA (OFFICE INFRASTRUKTUR)
+--------------------------------------------------------------------------------
+[A] HRIS SYSTEM
+  • LAN URL       : https://192.168.1.29
+  • Public URL    : https://hris.tricentrumfortuna.com
+
+[B] HELPDESK SYSTEM (osTicket)
+  • LAN URL       : http://192.168.1.18
+  • Public URL    : https://helpdesk.tricentrumfortuna.com
+
+[C] IDEMPIERE ERP
+  • LAN URL       : https://192.168.1.8:8443
+  • Public URL    : https://idempiere.tricentrumfortuna.com
+
+[D] MMS SYSTEM
+  • LAN URL       : http://192.168.1.33:8000
+  • Public URL    : https://mms.tricentrumfortuna.com
+
+[E] N8N AUTOMATION WORKFLOW
+  • LAN URL       : http://192.168.1.122:5678
+  • Public URL    : https://n8n.tricentrumfortuna.com
+
+[F] SHOPFLOOR SYSTEM
+  • LAN URL       : https://192.168.1.35
+  • Public URL    : https://shopfloor.tricentrumfortuna.com
+
+[G] VENDOR PORTAL
+  • LAN URL       : https://192.168.1.86
+  • Public URL    : https://vendor.tricentrumfortuna.com
+
+[H] INFO SYSTEM
+  • LAN URL       : http://192.168.1.69
+  • Public URL    : https://info.tricentrumfortuna.com
+
+
+--------------------------------------------------------------------------------
+6. KREDENSIAL SERVER LINUX (SSH ACCESS)
+--------------------------------------------------------------------------------
+• Server PowerAsset (192.168.1.66):
+  - User          : root
+  - Password      : nevergiveup
+  - SSH Port      : 22
+
+================================================================================
+Dokumen ini dibuat otomatis untuk referensi akses tim ICT PT. Tri Centrum Fortuna.
+================================================================================

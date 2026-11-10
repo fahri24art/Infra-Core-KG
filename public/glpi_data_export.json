@@ -1,0 +1,198 @@
+{
+    "users": [
+        {
+            "id": 1,
+            "name": "SRI WAHYUNI",
+            "realname": "Wahyuni",
+            "firstname": "Sri",
+            "user_dn": "Finance Staff"
+        },
+        {
+            "id": 2,
+            "name": "BUDI SANTOSO",
+            "realname": "Santoso",
+            "firstname": "Budi",
+            "user_dn": "Finance Manager"
+        },
+        {
+            "id": 3,
+            "name": "SITI AMINAH",
+            "realname": "Aminah",
+            "firstname": "Siti",
+            "user_dn": "Finance Staff"
+        },
+        {
+            "id": 4,
+            "name": "NURUL AENI",
+            "realname": "Aeni",
+            "firstname": "Nurul",
+            "user_dn": "HR Staff"
+        },
+        {
+            "id": 5,
+            "name": "DEWI SARTIKA",
+            "realname": "Sartika",
+            "firstname": "Dewi",
+            "user_dn": "HR Manager"
+        },
+        {
+            "id": 6,
+            "name": "YANI AHMAD",
+            "realname": "Ahmad",
+            "firstname": "Yani",
+            "user_dn": "Engineering Lead"
+        },
+        {
+            "id": 7,
+            "name": "RUDI HARTONO",
+            "realname": "Hartono",
+            "firstname": "Rudi",
+            "user_dn": "Engineer"
+        },
+        {
+            "id": 8,
+            "name": "EKO PRASETYO",
+            "realname": "Prasetyo",
+            "firstname": "Eko",
+            "user_dn": "Engineer"
+        },
+        {
+            "id": 9,
+            "name": "ANDI WIJAYA",
+            "realname": "Wijaya",
+            "firstname": "Andi",
+            "user_dn": "Marketing Staff"
+        },
+        {
+            "id": 10,
+            "name": "DIANA PUTRI",
+            "realname": "Putri",
+            "firstname": "Diana",
+            "user_dn": "Marketing Lead"
+        },
+        {
+            "id": 11,
+            "name": "AGUS SALIM",
+            "realname": "Salim",
+            "firstname": "Agus",
+            "user_dn": "GA Staff"
+        },
+        {
+            "id": 12,
+            "name": "RATNA SARI",
+            "realname": "Sari",
+            "firstname": "Ratna",
+            "user_dn": "GA Manager"
+        },
+        {
+            "id": 13,
+            "name": "BAMBANG P",
+            "realname": "Pamungkas",
+            "firstname": "Bambang",
+            "user_dn": "Logistics Staff"
+        },
+        {
+            "id": 14,
+            "name": "SUPRIYADI",
+            "realname": "Supriyadi",
+            "firstname": "",
+            "user_dn": "Logistics Staff"
+        },
+        {
+            "id": 15,
+            "name": "CHRISANTO",
+            "realname": "Chrisanto",
+            "firstname": "",
+            "user_dn": "Sales Lead"
+        },
+        {
+            "id": 16,
+            "name": "FERDY S",
+            "realname": "Sambo",
+            "firstname": "Ferdy",
+            "user_dn": "Sales"
+        },
+        {
+            "id": 17,
+            "name": "LUCY L",
+            "realname": "Liu",
+            "firstname": "Lucy",
+            "user_dn": "Sales"
+        },
+        {
+            "id": 18,
+            "name": "IT INFRA",
+            "realname": "Infrastructure",
+            "firstname": "IT",
+            "user_dn": "System Admin"
+        },
+        {
+            "id": 19,
+            "name": "IT NETWORK",
+            "realname": "Network",
+            "firstname": "IT",
+            "user_dn": "Network Admin"
+        },
+        {
+            "id": 20,
+            "name": "LINDA",
+            "realname": "Linda",
+            "firstname": "",
+            "user_dn": "Receptionist"
+        },
+        {
+            "id": 21,
+            "name": "PAK BOSS",
+            "realname": "Boss",
+            "firstname": "Pak",
+            "user_dn": "Director"
+        }
+    ],
+    "departments": [
+        {
+            "id": 1,
+            "name": "Finance",
+            "comment": "Financial & Accounting Dept"
+        },
+        {
+            "id": 2,
+            "name": "HR Dept",
+            "comment": "Human Resources"
+        },
+        {
+            "id": 3,
+            "name": "Engineering",
+            "comment": "Technical & Engineering"
+        },
+        {
+            "id": 4,
+            "name": "Marketing",
+            "comment": "Sales & Marketing"
+        },
+        {
+            "id": 5,
+            "name": "General Affairs",
+            "comment": "GA & Facility"
+        },
+        {
+            "id": 6,
+            "name": "Logistics",
+            "comment": "Warehouse & Logistics"
+        },
+        {
+            "id": 7,
+            "name": "Sales",
+            "comment": "Sales Team"
+        },
+        {
+            "id": 8,
+            "name": "IT Dept",
+            "comment": "Information Technology"
+        },
+        {
+            "id": 9,
+            "name": "Executive",
+            "comment": "Board of Directors"
+        }
+    ]
+}

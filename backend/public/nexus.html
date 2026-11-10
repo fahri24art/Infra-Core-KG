@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Hub | TCF Global Systems</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #020617; }
+        .cyber-font { font-family: 'Orbitron', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .glow-blue { box-shadow: 0 0 50px rgba(59, 130, 246, 0.15); }
+        .glow-indigo { box-shadow: 0 0 50px rgba(99, 102, 241, 0.15); }
+        .btn-hover:hover { transform: translateY(-4px); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+    </style>
+</head>
+<body class="min-h-screen text-slate-200 flex items-center justify-center p-6 overflow-hidden">
+    <!-- Animated Background -->
+    <div class="absolute inset-0 z-0 opacity-20 pointer-events-none">
+        <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600 blur-[150px] rounded-full"></div>
+        <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-800 blur-[150px] rounded-full"></div>
+    </div>
+
+    <div class="max-w-4xl w-full z-10 animate-in fade-in zoom-in duration-1000">
+        <div class="text-center mb-16">
+            <h1 class="text-6xl font-black cyber-font text-white tracking-widest mb-4">NEXUS <span class="text-blue-500">HUB</span></h1>
+            <p class="text-slate-400 font-bold uppercase tracking-[0.5em] text-sm">Unified Access Protocol | TCF-SG-2026</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-8">
+            <!-- Power Asset Card -->
+            <a href="/access/power-asset" class="glass p-10 rounded-[2.5rem] flex flex-col items-center text-center btn-hover transition-all group glow-blue">
+                <div class="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/50 group-hover:scale-110 transition-transform">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                </div>
+                <h2 class="text-3xl font-black text-white mb-4 tracking-tighter">InfraCore</h2>
+                <p class="text-slate-500 text-sm leading-relaxed mb-8">Infrastructure management, asset tracking, and maintenance protocols.</p>
+                <div class="mt-auto px-8 py-3 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-all">Launch Terminal</div>
+            </a>
+
+            <!-- Infra Guard Card -->
+            <a href="/access/infra-guard" class="glass p-10 rounded-[2.5rem] flex flex-col items-center text-center btn-hover transition-all group glow-indigo">
+                <div class="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center mb-8 shadow-2xl shadow-indigo-500/50 group-hover:scale-110 transition-transform">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <h2 class="text-3xl font-black text-white mb-4 tracking-tighter">Infra Guard</h2>
+                <p class="text-slate-500 text-sm leading-relaxed mb-8">Security intelligence, real-time auditing, and autonomous defense hub.</p>
+                <div class="mt-auto px-8 py-3 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-all">Secure Entry</div>
+            </a>
+        </div>
+
+        <div class="mt-20 flex justify-center items-center gap-12 grayscale opacity-40 hover:grayscale-0 hover:opacity-100 transition-all duration-700">
+            <span class="text-[10px] font-black tracking-[0.5em] uppercase text-slate-500">PT. Tri Centrum Fortuna</span>
+            <div class="h-1 w-1 rounded-full bg-slate-700"></div>
+            <span class="text-[10px] font-black tracking-[0.5em] uppercase text-slate-500">Global Integrated Systems</span>
+        </div>
+    </div>
+</body>
+</html>

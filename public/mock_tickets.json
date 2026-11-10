@@ -1,0 +1,71 @@
+[
+    {
+        "id": 6,
+        "subject": "System Latency Issues",
+        "status": "Resolved",
+        "priority": "High",
+        "user": "PRAJNA PARAMITHA PUTRI",
+        "date": "1/14/2026",
+        "time": "12:19:12 PM",
+        "updates": [
+            {
+                "type": "post",
+                "user": "PRAJNA PARAMITHA PUTRI",
+                "date": "1/14/2026, 12:19:12 PM",
+                "content": "System is running very slow since morning."
+            },
+            {
+                "type": "status_change",
+                "user": "system",
+                "date": "1/14/2026, 1:22:27 PM",
+                "content": "close"
+            },
+            {
+                "type": "post",
+                "user": "Admin",
+                "date": "1/14/2026, 1:22:30 PM",
+                "content": "Resolved after server restart."
+            }
+        ]
+    },
+    {
+        "id": 5,
+        "subject": "Printer Toner Low",
+        "status": "Closed",
+        "priority": "Medium",
+        "user": "PRAJNA",
+        "date": "1/14/2026"
+    },
+    {
+        "id": 4,
+        "subject": "Debug Ticket HTTP 500",
+        "status": "New",
+        "priority": "Low",
+        "user": "nevergiveup",
+        "date": "1/14/2026"
+    },
+    {
+        "id": 3,
+        "subject": "Test Ticket from Bridge",
+        "status": "Open",
+        "priority": "Medium",
+        "user": "Admin",
+        "date": "1/5/2026"
+    },
+    {
+        "id": 2,
+        "subject": "PELAKSANAAN PEMELIHAR...",
+        "status": "Open",
+        "priority": "Medium",
+        "user": "Admin",
+        "date": "11/3/2025"
+    },
+    {
+        "id": 1,
+        "subject": "Request: New Software",
+        "status": "Open",
+        "priority": "Medium",
+        "user": "Admin",
+        "date": "11/3/2025"
+    }
+]

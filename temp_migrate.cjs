@@ -1,0 +1,1 @@
+const db = require('./db'); async function run() { try { await db.schema.table('assets', table => { table.integer('cpu_usage').defaultTo(0); table.integer('ram_usage').defaultTo(0); table.integer('disk_usage').defaultTo(0); }); console.log('Migration done!'); } catch(e) { console.log(e.message); } finally { process.exit(0); } } run();

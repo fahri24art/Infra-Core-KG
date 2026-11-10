@@ -1,0 +1,57 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment secrets
+backend/.env
+.env
+!.env.example
+!backend/.env.example
+
+# Auth sessions
+whatsapp_auth*
+baileys_auth*
+wwebjs_auth*
+session*
+
+# Dynamic exports and downloads
+backend/services/downloads/
+backend/services/error_screenshot.png
+backend/exports/*.xlsx
+backend/exports/*.pdf
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+
+# Archives & Tools
+*.tar.gz
+*.zip
+_tools/
+_Scripts/
+_Temp_Scratch/
+_Tests/
+*.rsc
+*.pptx
+TCF_Agent_Setup_KG_V2*.exe
+TCF_Agent_Setup_SG*
+backend/caddy.exe

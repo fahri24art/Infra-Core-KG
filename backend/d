@@ -1,0 +1,98 @@
+const knex = require('knex');
+const path = require('path');
+
+// Organization-specific database configurations
+const ORG_DB_CONFIG = {
+    'TCF-SG': {
+        sqlite: path.join(__dirname, 'network_monitor.db'),
+        postgres: 'network_monitor_db'
+    },
+    'TCF-KG': {
+        sqlite: path.join(__dirname, 'network_monitor_kg.db'),
+        postgres: 'network_monitor_kg'
+    }
+};
+
+// Cache untuk koneksi database per organisasi
+const dbConnections = {};
+
+// Variabel global untuk organisasi aktif saat ini
+let _activeOrg = 'TCF-SG';
+
+/**
+ * Set organisasi aktif - dipanggil oleh middleware di index.js setiap request
+ */
+function setActiveOrg(org) {
+    _activeOrg = org || 'TCF-SG';
+}
+
+/**
+ * Dapatkan koneksi database untuk organisasi tertentu
+ */
+function getDb(organization) {
+    // Jika tidak ada parameter, pakai organisasi yang sedang aktif
+    const org = organization || _activeOrg;
+    
+    if (!ORG_DB_CONFIG[org]) {
+        console.warn(`[DB] Unknown organization: ${org}, defaulting to TCF-SG`);
+        return dbConnections['TCF-SG'] || getDb('TCF-SG');
+    }
+
+    if (dbConnections[org]) {
+        return dbConnections[org];
+    }
+
+    const usePostgres = process.env.POSTGRES_HOST;
+    let config;
+
+    if (usePostgres) {
+        config = {
+            client: 'pg',
+            connection: {
+                host: process.env.POSTGRES_HOST || '127.0.0.1',
+                port: parseInt(process.env.POSTGRES_PORT || '5432'),
+                user: process.env.POSTGRES_USER || 'netadmin',
+                password: process.env.POSTGRES_PASSWORD || 'secure_net_pass',
+                database: ORG_DB_CONFIG[org].postgres
+            },
+            migrations: { directory: './migrations' },
+            seeds: { directory: './seeds' },
+            debug: false,
+        };
+    } else {
+        config = {
+            client: 'sqlite3',
+            connection: { filename: ORG_DB_CONFIG[org].sqlite },
+            useNullAsDefault: true,
+            migrations: { directory: './migrations' },
+            seeds: { directory: './seeds' },
+            debug: false,
+        };
+    }
+
+    console.log(`[DB] Creating new connection for organization: ${org}`);
+    dbConnections[org] = knex(config);
+    return dbConnections[org];
+}
+
+// Inisialisasi koneksi default TCF-SG (dibuat saat startup)
+getDb('TCF-SG');
+
+// Proxy: setiap kali route memanggil require('../db')('table_name'),
+// otomatis menggunakan database organisasi yang aktif
+const handler = {
+    get(target, prop) {
+        const db = getDb();
+        if (db && typeof db[prop] === 'function') {
+            return db[prop].bind(db);
+        }
+        return db ? db[prop] : undefined;
+    }
+};
+
+const dbProxy = new Proxy(getDb('TCF-SG'), handler);
+
+module.exports = dbProxy;
+module.exports.getDb = getDb;
+module.exports.setActiveOrg = setActiveOrg;
+module.exports.ORG_DB_CONFIG = ORG_DB_CONFIG;

@@ -1,0 +1,591 @@
+const express = require('express');
+const router = express.Router();
+const db = require('../db');
+
+// GET /api/maintenance/stats - Dashboard summary
+router.get('/stats', async (req, res) => {
+    const year = req.query.year || new Date().getFullYear();
+    try {
+        const assets = await db('assets').select('id', 'category', 'type', 'name');
+
+        const pcAssets = assets.filter(a => {
+            const typ = (a.type || '').toLowerCase();
+            return typ === 'desktop' || typ === 'pc';
+        });
+
+        const laptopAssets = assets.filter(a => {
+            const typ = (a.type || '').toLowerCase();
+            return typ === 'laptop' || typ === 'notebook';
+        });
+
+        // Filter for "Qualified" assets (Everything EXCEPT Monitor, since Monitor is a set with PC)
+        const qualifiedAssets = assets.filter(a => {
+            const cat = (a.category || '').toLowerCase();
+            return cat !== 'monitor';
+        });
+
+        const qualifiedAssetIds = qualifiedAssets.map(a => a.id);
+        const totalQualified = qualifiedAssetIds.length;
+
+        // Completion status: unique qualified assets with at least one record in this year
+        const completedRecords = await db('maintenance_records')
+            .where('year', year)
+            .whereIn('asset_id', qualifiedAssetIds)
+            .select('asset_id');
+
+        const completedUniqueIds = new Set(completedRecords.map(r => r.asset_id));
+        const doneCount = completedUniqueIds.size;
+
+        res.json({
+            devices: {
+                pc: pcAssets.length,
+                laptop: laptopAssets.length,
+                total: pcAssets.length + laptopAssets.length
+            },
+            completion: {
+                done: doneCount,
+                pending: Math.max(0, totalQualified - doneCount),
+                total: totalQualified,
+                percentage: totalQualified > 0 ? (doneCount / totalQualified * 100).toFixed(1) : 0
+            }
+        });
+    } catch (err) {
+        console.error('Error fetching maintenance stats:', err);
+        res.status(500).json({ error: 'Failed' });
+    }
+});
+
+// GET /api/maintenance/monthly-kpi - Aggregate target vs actual per month
+router.get('/monthly-kpi', async (req, res) => {
+    const year = req.query.year || new Date().getFullYear();
+    try {
+        // 0. Fetch total qualified assets (exclude Monitors since they are bundled with PCs)
+        const assets = await db('assets').select('id', 'category', 'type', 'name');
+        const qualifiedAssets = assets.filter(a => {
+            const cat = (a.category || '').toLowerCase();
+            return cat !== 'monitor';
+        });
+        const qualifiedAssetIds = new Set(qualifiedAssets.map(a => a.id));
+
+        // 1. Fetch all plans for the year
+        const plans = await db('maintenance_plans')
+            .where({ year, maintenance_type: 'Semester' })
+            .select('planning_data', 'semester');
+
+        // 2. Fetch all completed records for the year
+        const records = await db('maintenance_records')
+            .whereRaw('CAST(year AS TEXT) = ?', [year.toString()])
+            .where('status', 'Completed')
+            .select('asset_id', 'week_key', 'maintenance_date', 'status');
+
+        const monthlyData = Array.from({ length: 12 }, (_, i) => ({
+            month: i + 1,
+            target: 0,
+            actual: 0
+        }));
+
+        // Process Targets (Summing planned assets per month)
+        plans.forEach(p => {
+            try {
+                const pData = typeof p.planning_data === 'string' ? JSON.parse(p.planning_data) : p.planning_data;
+                const monthsInPlan = new Set();
+                Object.keys(pData).forEach(key => {
+                    let month = parseInt(key.split('_')[0]);
+                    // Shift month if Semester 2
+                    if (p.semester === 2) {
+                        month += 6;
+                    }
+                    if (month >= 1 && month <= 12) {
+                        monthsInPlan.add(month);
+                    }
+                });
+                monthsInPlan.forEach(m => {
+                    monthlyData[m - 1].target++;
+                });
+            } catch (e) { }
+        });
+
+        // Process Actuals (Count unique assets per month based on ACTUAL DATE to separate semesters)
+        const uniqueMonthAssets = Array.from({ length: 12 }, () => new Set());
+
+        records.forEach(r => {
+            if (qualifiedAssetIds.has(r.asset_id)) {
+                // Use maintenance_date to determine absolute month
+                const mDate = new Date(r.maintenance_date);
+                const absMonth = mDate.getMonth(); // 0-11
+                if (absMonth >= 0 && absMonth <= 11) {
+                    uniqueMonthAssets[absMonth].add(r.asset_id);
+                }
+            }
+        });
+
+        uniqueMonthAssets.forEach((set, i) => {
+            monthlyData[i].actual = set.size;
+        });
+
+        // Set baseline 'Total Perangkat' default to qualifiedAssets.length
+        monthlyData.forEach(m => {
+            m['Total Perangkat'] = qualifiedAssets.length;
+        });
+
+        // Fetch overrides
+        const overrides = await db('kpi_overrides')
+            .where({ type: 'maintenance', year });
+
+        overrides.forEach(ov => {
+            const mIdx = ov.month - 1;
+            if (mIdx >= 0 && mIdx < 12) {
+                monthlyData[mIdx][ov.metric] = isNaN(ov.value) ? ov.value : Number(ov.value);
+            }
+        });
+
+        res.json({
+            // Expose the raw qualified asset count, but the real table uses the per-month overridden value
+            totalAssetsQualified: qualifiedAssets.length,
+            monthly: monthlyData.map(m => {
+                const totalAssetsUsed = m['Total Perangkat'] || qualifiedAssets.length;
+                return {
+                    month: m.month,
+                    'Total Perangkat': totalAssetsUsed,
+                    target: m.target,
+                    actual: m.actual,
+                    // Percentage based on Target
+                    percentage: m.target > 0 ? ((m.actual / m.target) * 100).toFixed(2) : "0.00"
+                };
+            })
+        });
+    } catch (err) {
+        console.error('Error fetching monthly KPI:', err);
+        res.status(500).json({ error: 'Failed' });
+    }
+});
+
+// GET /api/maintenance - List all maintenance plans (for Reports)
+router.get('/', async (req, res) => {
+    try {
+        const plans = await db('maintenance_plans')
+            .join('assets', 'maintenance_plans.asset_id', 'assets.id')
+            .leftJoin('users', 'assets.user_id', 'users.id')
+            .select(
+                'maintenance_plans.id',
+                'maintenance_plans.asset_id',
+                'maintenance_plans.year',
+                'maintenance_plans.semester',
+                'maintenance_plans.planning_data',
+                'maintenance_plans.actual_data',
+                'maintenance_plans.maintenance_type',
+                'assets.name as asset_name',
+                'assets.inventory_number',
+                'users.name as user_name',
+                'users.department as user_department',
+                'assets.location'
+            )
+            .orderBy('maintenance_plans.year', 'desc')
+            .orderBy('maintenance_plans.semester', 'asc');
+        
+        // Transform JSON data to match expected format
+        const transformedPlans = plans.map(plan => {
+            const planningData = typeof plan.planning_data === 'string' 
+                ? JSON.parse(plan.planning_data) 
+                : (plan.planning_data || {});
+            
+            return {
+                id: plan.id,
+                asset_id: plan.asset_id,
+                year: plan.year,
+                semester: plan.semester,
+                name: planningData.name || `Maintenance ${plan.asset_id}`,
+                frequency_months: planningData.frequency_months || 6,
+                next_due: planningData.next_due || null,
+                asset_name: plan.asset_name,
+                inventory_number: plan.inventory_number,
+                user_name: plan.user_name,
+                user_department: plan.user_department,
+                location: plan.location,
+                planning_data: plan.planning_data,
+                actual_data: plan.actual_data,
+                maintenance_type: plan.maintenance_type
+            };
+        });
+        
+        res.json(transformedPlans);
+    } catch (err) {
+        console.error('Error fetching maintenance reports:', err);
+        res.status(500).json({ error: 'Failed to fetch maintenance reports' });
+    }
+});
+
+// GET /api/maintenance/schedule?year=2025&semester=1&type=Semester
+router.get('/schedule', async (req, res) => {
+    const { year, semester, type = 'Semester' } = req.query;
+    try {
+        const assets = await db('assets')
+            .leftJoin('users', 'assets.user_id', 'users.id')
+            .select('assets.id', 'assets.name', 'assets.inventory_number', 'assets.category', 'assets.manufacturer', 'users.name as user_name', 'users.department as user_department', 'assets.contact', 'assets.location');
+
+        // Hierarchy: Daily < Weekly < Monthly < Semester
+        const tiers = ['Daily', 'Weekly', 'Monthly', 'Semester'];
+        const currentTierIdx = tiers.indexOf(type);
+        const allowedTiers = currentTierIdx === -1 ? [type] : tiers.slice(currentTierIdx);
+
+        // Fetch existing plans for this period and allowed types (this tier and higher)
+        const plansRaw = await db('maintenance_plans')
+            .where({ year, semester })
+            .whereIn('maintenance_type', allowedTiers)
+            .select('*');
+
+        // Fetch records for this year and allowed types (this tier and higher)
+        const recordsRaw = await db('maintenance_records')
+            .whereIn('maintenance_type', allowedTiers)
+            .where('year', year)
+            .select('*');
+
+        // Map plans and records to assets
+        const schedule = assets
+            .filter(asset => {
+                const cat = (asset.category || '').toLowerCase();
+                return cat !== 'monitor';
+            })
+            .map(asset => {
+                // Merge multiple plans into one for this asset (Hierarchical)
+                const assetPlans = plansRaw.filter(p => p.asset_id === asset.id);
+                let mergedPlan = null;
+                if (assetPlans.length > 0) {
+                    // Sort by tier ascending (Daily -> Semester) so higher tiers override/merge on top
+                    assetPlans.sort((a, b) => tiers.indexOf(a.maintenance_type) - tiers.indexOf(b.maintenance_type));
+                    mergedPlan = { ...assetPlans[assetPlans.length - 1] }; // Base on highest tier found
+
+                    // Merge planning_data from all tiers
+                    let combinedPlanning = {};
+                    assetPlans.forEach(p => {
+                        try {
+                            const pData = typeof p.planning_data === 'string' ? JSON.parse(p.planning_data) : p.planning_data;
+                            combinedPlanning = { ...combinedPlanning, ...pData };
+                        } catch (e) { }
+                    });
+                    mergedPlan.planning_data = combinedPlanning;
+                }
+
+                const assetRecords = recordsRaw.filter(r => r.asset_id === asset.id);
+
+                // Convert records array to a map keyed by week_key for easy lookup
+                // Sort by tier index so higher tiers overwrite lower ones in the map
+                const recordsMap = {};
+                assetRecords
+                    .sort((a, b) => tiers.indexOf(a.maintenance_type) - tiers.indexOf(b.maintenance_type))
+                    .forEach(r => {
+                        if (r.week_key) {
+                            recordsMap[r.week_key] = r;
+                        }
+                    });
+
+                return {
+                    asset,
+                    plan: mergedPlan,
+                    records: recordsMap
+                };
+            });
+
+        res.json(schedule);
+    } catch (err) {
+        console.error('Error fetching schedule:', err);
+        res.status(500).json({ error: 'Failed to fetch schedule' });
+    }
+});
+
+// POST /api/maintenance/generate - Generate maintenance plans (6-month cycle)
+router.post('/generate', async (req, res) => {
+    const { year } = req.body;
+    try {
+        const assets = await db('assets').select('id', 'category', 'name').orderBy('id');
+
+        // 1. Fetch existing plans to preserve those with actual_data
+        const existingPlans = await db('maintenance_plans')
+            .where({ year, maintenance_type: 'Semester' })
+            .select('*');
+
+        const plansToKeep = existingPlans.filter(p => p.actual_data && p.actual_data !== '{}');
+        const planIdsToKeep = plansToKeep.map(p => p.id);
+
+        // Clear existing Semester plans for the entire year ONLY if they don't have actual_data
+        if (planIdsToKeep.length > 0) {
+            await db('maintenance_plans')
+                .where({ year, maintenance_type: 'Semester' })
+                .whereNotIn('id', planIdsToKeep)
+                .del();
+        } else {
+            await db('maintenance_plans')
+                .where({ year, maintenance_type: 'Semester' })
+                .del();
+        }
+
+        // Map preserved plans by asset_id and semester to skip generation
+        const existingPlanMap = {};
+        plansToKeep.forEach(p => {
+            if (!existingPlanMap[p.asset_id]) existingPlanMap[p.asset_id] = {};
+            existingPlanMap[p.asset_id][p.semester] = true;
+        });
+
+        const semesterWeeks = 24; // 6 months = 24 weeks
+        const maxPerWeek = 5;
+        const newPlans = [];
+
+        // 1. Filter Assets (Qualified for preventive maintenance)
+        const qualifiedAssets = assets.filter(asset => {
+            const cat = (asset.category || '').toLowerCase();
+            return cat !== 'monitor';
+        });
+
+        console.log(`[Maintenance] Scheduling ${qualifiedAssets.length} assets over 24-week semesters.`);
+
+        // 2. Distribute qualified assets (Round-Robin across 24 weeks for balanced load)
+
+        qualifiedAssets.forEach((asset, index) => {
+            // Distribute assets evenly: Asset 0 -> W0, Asset 1 -> W1, ..., Asset 24 -> W0
+            const targetWeek = index % semesterWeeks;
+
+            const monthIdx = Math.floor(targetWeek / 4) + 1; // 1-6
+            const weekIdx = (targetWeek % 4) + 1; // 1-4
+            const key = `${monthIdx}_${weekIdx}`;
+
+            // Add Semester 1 Plan
+            if (!existingPlanMap[asset.id]?.[1]) {
+                newPlans.push({
+                    asset_id: asset.id,
+                    year,
+                    semester: 1,
+                    maintenance_type: 'Semester',
+                    planning_data: JSON.stringify({ [key]: true }),
+                    actual_data: JSON.stringify({}),
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+            }
+
+            // Add Semester 2 Plan (Mirroring)
+            if (!existingPlanMap[asset.id]?.[2]) {
+                const s2MonthIdx = monthIdx + 6;
+                const s2Key = `${s2MonthIdx}_${weekIdx}`;
+                newPlans.push({
+                    asset_id: asset.id,
+                    year,
+                    semester: 2,
+                    maintenance_type: 'Semester',
+                    planning_data: JSON.stringify({ [s2Key]: true }),
+                    actual_data: JSON.stringify({}),
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+            }
+        });
+
+        // 3. Batch Insert
+        const chunkSize = 50;
+        for (let i = 0; i < newPlans.length; i += chunkSize) {
+            await db('maintenance_plans').insert(newPlans.slice(i, i + chunkSize));
+        }
+
+        res.json({
+            success: true,
+            message: `Generated ${newPlans.length} plans for ${year}.`,
+            details: {
+                totalAssets: qualifiedAssets.length,
+                semesterCapacity: semesterWeeks * maxPerWeek,
+                ratio: (qualifiedAssets.length / semesterWeeks).toFixed(1)
+            }
+        });
+    } catch (err) {
+        console.error('Error generating plans:', err);
+        res.status(500).json({ error: 'Failed to generate plans' });
+    }
+});
+
+// PUT /api/maintenance/plan/:id - Update planning data (checkboxes)
+router.put('/plan/:id', async (req, res) => {
+    const { planning_data, actual_data } = req.body;
+    try {
+        await db('maintenance_plans')
+            .where({ id: req.params.id })
+            .update({
+                planning_data: planning_data ? JSON.stringify(planning_data) : undefined,
+                actual_data: actual_data ? JSON.stringify(actual_data) : undefined,
+                updated_at: new Date()
+            });
+        res.json({ message: 'Plan updated' });
+    } catch (err) {
+        console.error('Error updating plan:', err);
+        res.status(500).json({ error: 'Failed to update plan' });
+    }
+});
+
+// POST /api/maintenance/record/upsert - Update or Create record (for quick status/condition changes)
+router.post('/record/upsert', async (req, res) => {
+    const trx = await db.transaction();
+    try {
+        const { asset_id, week_key, year, condition_before, condition_after, status, maintenance_date, pic_name, department, maintenance_type = 'Semester', checked_by, checked_at, approved_by, approved_at } = req.body;
+
+        // Check if record exists
+        let record = await trx('maintenance_records')
+            .where({ asset_id, week_key, year, maintenance_type })
+            .first();
+
+        let id;
+        if (record) {
+            // Update
+            await trx('maintenance_records')
+                .where({ id: record.id })
+                .update({
+                    condition_before: condition_before !== undefined ? condition_before : record.condition_before,
+                    condition_after: condition_after !== undefined ? condition_after : record.condition_after,
+                    status: status !== undefined ? status : record.status,
+                    checked_by: checked_by !== undefined ? checked_by : record.checked_by,
+                    checked_at: checked_at !== undefined ? checked_at : record.checked_at,
+                    approved_by: approved_by !== undefined ? approved_by : record.approved_by,
+                    approved_at: approved_at !== undefined ? approved_at : record.approved_at,
+                    updated_at: new Date()
+                });
+            id = record.id;
+        } else {
+            // Create
+            const [newId] = await trx('maintenance_records').insert({
+                asset_id,
+                week_key,
+                year,
+                maintenance_date: maintenance_date || new Date(),
+                maintenance_type: maintenance_type,
+                pic_name: pic_name || 'System',
+                department: department || 'IT',
+                condition_before: condition_before || '',
+                condition_after: condition_after || '',
+                status: status || 'Pending',
+                checked_by: checked_by || null,
+                checked_at: checked_at || null,
+                approved_by: approved_by || null,
+                approved_at: approved_at || null,
+                checksheet_data: JSON.stringify({}),
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+            id = newId;
+        }
+
+        await trx.commit();
+        res.json({ id, message: 'Record updated' });
+    } catch (err) {
+        await trx.rollback();
+        console.error('Error upserting record:', err);
+        res.status(500).json({ error: 'Failed to update record' });
+    }
+});
+
+// POST /api/maintenance/record - Create record & Update Plan
+router.post('/record', async (req, res) => {
+    const trx = await db.transaction();
+    try {
+        const { asset_id, maintenance_date, pic_name, department, condition_before, condition_after, status, checksheet_data, plan_id, week_key, maintenance_type = 'Semester', checked_by, checked_at, approved_by, approved_at } = req.body;
+
+        const year = new Date(maintenance_date).getFullYear();
+
+        // Check if record exists
+        let record = await trx('maintenance_records')
+            .where({ asset_id, week_key, year, maintenance_type })
+            .first();
+
+        let id;
+        if (record) {
+            // Update
+            await trx('maintenance_records')
+                .where({ id: record.id })
+                .update({
+                    maintenance_date,
+                    pic_name,
+                    department,
+                    condition_before,
+                    condition_after,
+                    status,
+                    checksheet_data: JSON.stringify(checksheet_data),
+                    checked_by: checked_by !== undefined ? checked_by : record.checked_by,
+                    checked_at: checked_at !== undefined ? checked_at : record.checked_at,
+                    approved_by: approved_by !== undefined ? approved_by : record.approved_by,
+                    approved_at: approved_at !== undefined ? approved_at : record.approved_at,
+                    updated_at: new Date()
+                });
+            id = record.id;
+        } else {
+            // Insert
+            const [newId] = await trx('maintenance_records').insert({
+                asset_id,
+                maintenance_date,
+                maintenance_type,
+                pic_name,
+                department,
+                condition_before,
+                condition_after,
+                status,
+                checked_by: checked_by || null,
+                checked_at: checked_at || null,
+                approved_by: approved_by || null,
+                approved_at: approved_at || null,
+                checksheet_data: JSON.stringify(checksheet_data),
+                week_key,
+                year,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+            id = newId;
+        }
+
+        // Auto-update Plan Status if linked
+        if (plan_id && week_key) {
+            const plan = await trx('maintenance_plans').where({ id: plan_id }).first();
+            if (plan) {
+                let actualData = {};
+                try {
+                    actualData = JSON.parse(plan.actual_data || '{}');
+                } catch (e) { }
+
+                actualData[week_key] = true; // Mark distinct week as done
+
+                await trx('maintenance_plans').where({ id: plan_id }).update({
+                    actual_data: JSON.stringify(actualData),
+                    updated_at: new Date()
+                });
+            }
+        }
+
+        await trx.commit();
+        res.status(201).json({ id, message: 'Maintenance record saved & Plan updated' });
+    } catch (err) {
+        await trx.rollback();
+        console.error('Error saving record:', err);
+        res.status(500).json({ error: 'Failed to save record' });
+    }
+});
+
+// GET /api/maintenance/record - Fetch specific record
+router.get('/record', async (req, res) => {
+    const { asset_id, week_key, year, maintenance_type = 'Semester' } = req.query;
+    try {
+        const tiers = ['Daily', 'Weekly', 'Monthly', 'Semester'];
+        const currentTierIdx = tiers.indexOf(maintenance_type);
+        const allowedTiers = currentTierIdx === -1 ? [maintenance_type] : tiers.slice(currentTierIdx);
+
+        const record = await db('maintenance_records')
+            .where({ asset_id, week_key, year })
+            .whereIn('maintenance_type', allowedTiers)
+            .then(rows => {
+                // Return the best (highest level) record
+                return rows.sort((a, b) => tiers.indexOf(b.maintenance_type) - tiers.indexOf(a.maintenance_type))[0];
+            });
+        if (record) {
+            res.json(record);
+        } else {
+            res.json(null);
+        }
+    } catch (err) {
+        console.error('Error fetching record:', err);
+        res.status(500).json({ error: 'Failed to fetch record' });
+    }
+});
+
+module.exports = router;

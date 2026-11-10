@@ -1,0 +1,252 @@
+[
+    {
+        "id": 1,
+        "name": "TCFSG-ICT-PC-2024-001",
+        "serial": "SN-FIN-001",
+        "type": "Computer",
+        "location": "Finance",
+        "model": "Dell Optiplex 7050",
+        "user": "SRI WAHYUNI",
+        "status": "Active"
+    },
+    {
+        "id": 2,
+        "name": "TCFSG-ICT-PC-2024-002",
+        "serial": "SN-FIN-002",
+        "type": "Computer",
+        "location": "Finance",
+        "model": "Dell Optiplex 7050",
+        "user": "BUDI SANTOSO",
+        "status": "Active"
+    },
+    {
+        "id": 3,
+        "name": "TCFSG-ICT-PC-2024-003",
+        "serial": "SN-FIN-003",
+        "type": "Computer",
+        "location": "Finance",
+        "model": "Dell Optiplex 3050",
+        "user": "SITI AMINAH",
+        "status": "Active"
+    },
+    {
+        "id": 4,
+        "name": "TCFSG-ICT-NB-2023-010",
+        "serial": "SN-HR-010",
+        "type": "Notebook",
+        "location": "HR Dept",
+        "model": "Lenovo ThinkPad X1",
+        "user": "NURUL AENI",
+        "status": "Active"
+    },
+    {
+        "id": 5,
+        "name": "TCFSG-ICT-NB-2023-011",
+        "serial": "SN-HR-011",
+        "type": "Notebook",
+        "location": "HR Dept",
+        "model": "Lenovo ThinkPad E14",
+        "user": "DEWI SARTIKA",
+        "status": "Active"
+    },
+    {
+        "id": 6,
+        "name": "TCFSG-ICT-PC-2021-036",
+        "serial": "SN-ENG-036",
+        "type": "Computer",
+        "location": "Engineering",
+        "model": "Custom i9 Workstation",
+        "user": "YANI AHMAD",
+        "status": "Active"
+    },
+    {
+        "id": 7,
+        "name": "TCFSG-ICT-PC-2021-037",
+        "serial": "SN-ENG-037",
+        "type": "Computer",
+        "location": "Engineering",
+        "model": "Custom i9 Workstation",
+        "user": "RUDI HARTONO",
+        "status": "Active"
+    },
+    {
+        "id": 8,
+        "name": "TCFSG-ICT-PC-2021-038",
+        "serial": "SN-ENG-038",
+        "type": "Computer",
+        "location": "Engineering",
+        "model": "Custom i7 Workstation",
+        "user": "EKO PRASETYO",
+        "status": "Active"
+    },
+    {
+        "id": 9,
+        "name": "TCFSG-ICT-NB-2025-020",
+        "serial": "SN-MKT-020",
+        "type": "Notebook",
+        "location": "Marketing",
+        "model": "MacBook Pro M2",
+        "user": "ANDI WIJAYA",
+        "status": "Active"
+    },
+    {
+        "id": 10,
+        "name": "TCFSG-ICT-NB-2025-021",
+        "serial": "SN-MKT-021",
+        "type": "Notebook",
+        "location": "Marketing",
+        "model": "MacBook Air M2",
+        "user": "DIANA PUTRI",
+        "status": "Active"
+    },
+    {
+        "id": 11,
+        "name": "TCFSG-ICT-PC-2020-004",
+        "serial": "SN-GA-004",
+        "type": "Computer",
+        "location": "General Affairs",
+        "model": "HP ProDesk 400",
+        "user": "AGUS SALIM",
+        "status": "Maintenance"
+    },
+    {
+        "id": 12,
+        "name": "TCFSG-ICT-PC-2020-005",
+        "serial": "SN-GA-005",
+        "type": "Computer",
+        "location": "General Affairs",
+        "model": "HP ProDesk 400",
+        "user": "RATNA SARI",
+        "status": "Active"
+    },
+    {
+        "id": 13,
+        "name": "TCFSG-ICT-PC-2022-015",
+        "serial": "SN-LOG-015",
+        "type": "Computer",
+        "location": "Logistics",
+        "model": "Dell Optiplex 3080",
+        "user": "BAMBANG P",
+        "status": "Active"
+    },
+    {
+        "id": 14,
+        "name": "TCFSG-ICT-PC-2022-016",
+        "serial": "SN-LOG-016",
+        "type": "Computer",
+        "location": "Logistics",
+        "model": "Dell Optiplex 3080",
+        "user": "SUPRIYADI",
+        "status": "Active"
+    },
+    {
+        "id": 15,
+        "name": "TCFSG-ICT-NB-2024-055",
+        "serial": "SN-SALES-055",
+        "type": "Notebook",
+        "location": "Sales",
+        "model": "Dell Latitude 5420",
+        "user": "CHRISANTO",
+        "status": "Active"
+    },
+    {
+        "id": 16,
+        "name": "TCFSG-ICT-NB-2024-056",
+        "serial": "SN-SALES-056",
+        "type": "Notebook",
+        "location": "Sales",
+        "model": "Dell Latitude 5420",
+        "user": "FERDY S",
+        "status": "Active"
+    },
+    {
+        "id": 17,
+        "name": "TCFSG-ICT-NB-2024-057",
+        "serial": "SN-SALES-057",
+        "type": "Notebook",
+        "location": "Sales",
+        "model": "Dell Latitude 5420",
+        "user": "LUCY L",
+        "status": "Active"
+    },
+    {
+        "id": 18,
+        "name": "TCFSG-ICT-SRV-001",
+        "serial": "SN-SRV-MAIN",
+        "type": "Server",
+        "location": "Server Room",
+        "model": "Dell PowerEdge R740",
+        "user": "IT INFRA",
+        "status": "Active"
+    },
+    {
+        "id": 19,
+        "name": "TCFSG-ICT-SRV-002",
+        "serial": "SN-SRV-BKUP",
+        "type": "Server",
+        "location": "Server Room",
+        "model": "Dell PowerEdge R440",
+        "user": "IT INFRA",
+        "status": "Active"
+    },
+    {
+        "id": 20,
+        "name": "TCFSG-ICT-PTR-001",
+        "serial": "SN-PTR-FIN",
+        "type": "Printer",
+        "location": "Finance",
+        "model": "Epson L3110",
+        "user": "SHARED",
+        "status": "Active"
+    },
+    {
+        "id": 21,
+        "name": "TCFSG-ICT-PTR-002",
+        "serial": "SN-PTR-HR",
+        "type": "Printer",
+        "location": "HR Dept",
+        "model": "HP LaserJet Pro",
+        "user": "SHARED",
+        "status": "Active"
+    },
+    {
+        "id": 22,
+        "name": "TCFSG-ICT-NET-SW01",
+        "serial": "SN-SW-CORE",
+        "type": "Network",
+        "location": "Server Room",
+        "model": "Cisco Catalyst 9200",
+        "user": "IT NETWORK",
+        "status": "Active"
+    },
+    {
+        "id": 23,
+        "name": "TCFSG-ICT-NET-AP01",
+        "serial": "SN-AP-LOBBY",
+        "type": "Network",
+        "location": "Lobby",
+        "model": "Unifi U6 Lite",
+        "user": "IT NETWORK",
+        "status": "Active"
+    },
+    {
+        "id": 24,
+        "name": "TCFSG-ICT-PC-2021-099",
+        "serial": "SN-REC-001",
+        "type": "Computer",
+        "location": "Reception",
+        "model": "All-in-One HP",
+        "user": "LINDA",
+        "status": "Active"
+    },
+    {
+        "id": 25,
+        "name": "TCFSG-ICT-SP-2024-010",
+        "serial": "SN-DIR-001",
+        "type": "Phone",
+        "location": "Director",
+        "model": "iPhone 15 Pro",
+        "user": "PAK BOSS",
+        "status": "Active"
+    }
+]

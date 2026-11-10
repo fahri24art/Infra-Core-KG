@@ -1,0 +1,14 @@
+{
+    admin off
+}
+
+:80 {
+    # Proxy to Node Backend (Port 5001)
+    # This handles both /api and static file serving as defined in index.js
+    reverse_proxy * localhost:5001
+
+    # Log to file for debugging
+    log {
+        output file access.log
+    }
+}

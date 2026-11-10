@@ -1,0 +1,64 @@
+LAPORAN ANALISA FORENSIK KEAMANAN SERVER (IDEMPIERE & INFRA GUARD)
+Tanggal: 21 Juli 2026
+Dianalisa oleh: Tim Security Power Asset
+
+-------------------------------------------------------------------------------
+1. FILE: exploit.jsp 
+Lokasi Ditemukan: /webui/, /ROOT/, /idempiere/ (Server iDempiere)
+-------------------------------------------------------------------------------
+Apa isinya: 
+Ini adalah "Java Web Shell" (karena iDempiere berbasis Java). Isinya adalah barisan kode pemrograman Java yang dirancang jahat untuk menerima dan mengeksekusi perintah terminal OS Linux (seperti bash atau cmd).
+
+Cara Kerjanya: 
+Hacker cukup membuka web browser atau menjalankan script penyerang jarak jauh, lalu mengakses URL server. Misalnya: https://idempiere.tricentrumfortuna.com/webui/exploit.jsp?command=cat /etc/passwd. 
+Server iDempiere yang rentan akan memproses perintah tersebut dan mengeksekusinya seolah-olah sang hacker sedang duduk di depan layar server.
+
+Tujuan: 
+File ini digunakan sebagai "Pintu Masuk Utama" (Primary Entry Point) untuk mengontrol server dari jarak jauh, mencuri file konfigurasi, atau menyalin isi database perusahaan tanpa memerlukan akses login SSH yang sah.
+
+
+-------------------------------------------------------------------------------
+2. FILE: callback.jsp & idempiere.jsp
+Lokasi Ditemukan: /plugins/org.adempiere.server_12.../ (Server iDempiere)
+-------------------------------------------------------------------------------
+Apa isinya: 
+Fungsi teknis file ini sama persis dengan exploit.jsp (merupakan Web Shell). Namun, file ini dinamai menggunakan teknik kamuflase (Stealth/Camouflage).
+
+Cara Kerjanya: 
+Hacker secara sengaja menaruh file ini di dalam direktori "plugins" yang letaknya sangat dalam, kemudian memberikan nama yang sekilas terlihat seperti file bawaan sistem asli (contoh: idempiere.jsp).
+
+Tujuan: 
+File ini merupakan taktik "Persistence" (Bertahan Hidup). Tujuannya agar jika suatu saat tim IT menyadari serangan dan menghapus file utama (exploit.jsp), hacker masih memiliki "pintu cadangan" rahasia yang tersembunyi di dalam direktori plugin untuk kembali meretas server di lain hari.
+
+
+-------------------------------------------------------------------------------
+3. FILE: .sysmon.php 
+Lokasi Ditemukan: /var/www/html/ dan /var/www/html/infra-guard/ (Server Infra Guard - 192.168.1.3)
+-------------------------------------------------------------------------------
+Apa isinya: 
+Ini adalah custom backdoor berbentuk PHP yang disembunyikan (berawalan titik agar tidak terlihat oleh perintah standar "ls"). File ini dikhususkan untuk menargetkan jaringan internal secara spesifik.
+
+Cara Kerjanya: 
+Script ini dipasang "gembok keamanan ganda" oleh sang hacker. Ia HANYA akan mengeksekusi perintah berbahaya jika hacker mengirimkan HTTP Request Header yang berisi token rahasia milik infrastruktur internal: 
+"X-Monitor-Token: tr1c3ntrum_s3cr3t_2024" (Token ini diduga kuat dicuri dari server iDempiere yang jebol lebih dulu).
+
+Kehebatan Tipuannya: 
+Apabila tim IT (atau aplikasi monitoring lokal) mengakses URL file ini secara biasa tanpa token rahasia tersebut, script ini hanya akan menampilkan tulisan "ok" atau "netstat-mon v1.2", sehingga terlihat seperti file indikator jaringan yang normal. Namun jika diakses menggunakan token curian, file ini berubah wujud menjadi Terminal Linux Root.
+
+-------------------------------------------------------------------------------
+KESIMPULAN ALUR SERANGAN (ATTACK CHAIN):
+1. Hacker menemukan dan mengeksploitasi celah keamanan di aplikasi web iDempiere -> Upload exploit.jsp.
+2. Dari exploit.jsp, hacker menggeledah isi server iDempiere dan menemukan kredensial / IP server Infra Guard (192.168.1.3) beserta Token Rahasia.
+3. Hacker melakukan lompatan (Lateral Movement) ke server Infra Guard -> Memasang backdoor .sysmon.php menggunakan Token Rahasia agar tidak memicu kecurigaan sistem monitoring.
+4. Melalui .sysmon.php, hacker menaikkan hak akses (Privilege Escalation) hingga akhirnya berhasil mendapatkan akses SSH 'root' dan menguasai server Infra Guard sepenuhnya.
+
+STATUS PENANGANAN SAAT INI:
+- Semua file .sysmon.php di server Infra Guard (192.168.1.3) TELAH DIMUSNAHKAN.
+- Koneksi SSH peretas di Infra Guard TELAH DIPUTUS (killall -9 sshd).
+- IP peretas (111.90.138.173) TELAH DIBLOKIR.
+
+TINDAKAN SELANJUTNYA UNTUK TIM IT:
+- Hapus semua file .jsp mencurigakan di server iDempiere.
+- Ganti PASSWORD ROOT di semua server internal.
+- Rotasi/Ganti Token "tr1c3ntrum_s3cr3t_2024" secara serentak.
+- Tutup port 22 (SSH) dari akses internet publik.
