@@ -512,8 +512,6 @@ async function scrapeAndSyncDevice(ip, printerName, username = 'admin', password
 }
 
 const RICOH_DEVICES = [
-    { ip: '192.168.2.11', name: 'MC-02-OFFICE_Atas', org: 'TCF-SG' },
-    { ip: '192.168.2.10', name: 'MC-01-PPIC', org: 'TCF-SG' },
     { ip: '192.168.27.11', name: 'KG-1', org: 'TCF-KG' },
     { ip: '192.168.27.12', name: 'KG-2', org: 'TCF-KG' }
 ];

@@ -93,8 +93,8 @@ async function checkAndEnforceCopierQuotas(org = 'TCF-SG') {
 /**
  * Pushes Copier function permission (enable/disable) for a PIN to Ricoh printers
  */
-async function syncCopierPermissionToPrinters(userCode, allowCopier = true, org = 'TCF-SG') {
-    const printerIps = org === 'TCF-KG' ? ['192.168.27.11', '192.168.27.12'] : ['192.168.2.11', '192.168.2.10'];
+async function syncCopierPermissionToPrinters(userCode, allowCopier = true, org = 'TCF-KG') {
+    const printerIps = ['192.168.27.11', '192.168.27.12'];
     console.log(`[COPIER SYNC] [${org}] Pushing Copier Permission (${allowCopier ? 'ENABLED' : 'DISABLED'}) for PIN: ${userCode} across printers ${printerIps.join(', ')}...`);
 
     const exe = getBrowserExecutable();
