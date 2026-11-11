@@ -637,7 +637,7 @@ $threats = (Get-MpThreatDetection -ErrorAction SilentlyContinue | Measure-Object
 $outMsg = "DEFENDER_SCAN_COMPLETED|THREATS=$threats"
 Write-Output $outMsg
 $resp = @{ status = "executed"; output = $outMsg } | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://192.168.1.66:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
+Invoke-RestMethod -Uri "http://192.168.27.48:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
         } else if (action === 'restart_rustdesk') {
             actionDesc = 'Restart Servis RustDesk';
             psCommand = String.raw`$ErrorActionPreference = "SilentlyContinue"
@@ -652,7 +652,7 @@ if ($svc) {
 }
 Write-Output $outMsg
 $resp = @{ status = "executed"; output = $outMsg } | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://192.168.1.66:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
+Invoke-RestMethod -Uri "http://192.168.27.48:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
         } else if (action === 'usb_unlock_temp') {
             actionDesc = 'Buka Kunci USB Sementara (1 Jam)';
             psCommand = String.raw`$ErrorActionPreference = "SilentlyContinue"
@@ -680,7 +680,7 @@ Get-PnpDevice -Class "DiskDrive" -ErrorAction SilentlyContinue | Where-Object {
 $outMsg = "USB_UNLOCKED_1HOUR_OK|EnabledDisks=$enabledDisks"
 Write-Output $outMsg
 $resp = @{ status = "executed"; output = $outMsg } | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://192.168.1.66:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+Invoke-RestMethod -Uri "http://192.168.27.48:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
 Start-Sleep -Seconds 3600
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices" -Name "Deny_All" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR" -Name "Start" -Value 4 -Type DWord -Force -ErrorAction SilentlyContinue`;
@@ -709,7 +709,7 @@ Get-PnpDevice -Class "DiskDrive" -ErrorAction SilentlyContinue | Where-Object {
 $outMsg = "USB_LOCKED_SUCCESS|DenyAll=1|USBSTOR=4|DisabledDisks=$disabledDisks"
 Write-Output $outMsg
 $resp = @{ status = "executed"; output = $outMsg } | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://192.168.1.66:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
+Invoke-RestMethod -Uri "http://192.168.27.48:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
         } else if (action === 'resync') {
             actionDesc = 'Re-Sync Telemetri Endpoint';
             psCommand = String.raw`$ErrorActionPreference = "SilentlyContinue"
@@ -724,7 +724,7 @@ foreach ($ap in $agentPaths) {
 $outMsg = "TELEMETRY_TRIGGERED"
 Write-Output $outMsg
 $resp = @{ status = "executed"; output = $outMsg } | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://192.168.1.66:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
+Invoke-RestMethod -Uri "http://192.168.27.48:5000/api/network/agents/command/response/` + asset.uuid + String.raw`" -Method Post -Body $resp -ContentType "application/json" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null`;
         } else {
             return res.status(400).json({ error: `Aksi tidak dikenal: ${action}` });
         }

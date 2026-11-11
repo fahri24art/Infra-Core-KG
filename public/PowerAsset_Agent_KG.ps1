@@ -12,9 +12,8 @@
 # Multi-Endpoint Failover: Try Local LAN IP first (fast & instant for office PCs), then Public Domain for remote PCs
 # ==========================================
 $ServerCandidates = @(
-    "https://helpdesk.tricentrumfortuna.com",
-    "http://server.tricentrumfortuna.com:66",
-    "http://192.168.1.66:5000"
+    "http://192.168.27.48:5000",
+    "http://36.89.210.210:2425"
 )
 $Organization = "TCF-KG"
 $global:ActiveServerURL = $null
@@ -338,7 +337,7 @@ function Send-Telemetry {
     $wazuhService = Get-Service | Where-Object { $_.Name -like "*wazuh*" -or $_.DisplayName -like "*wazuh*" -or $_.Name -like "*ossec*" } | Select-Object -First 1
     if (-not $wazuhService) {
         try {
-            $msiUrl = "http://192.168.1.66:5000/wazuh-agent.msi"
+            $msiUrl = "http://192.168.27.48:5000/wazuh-agent.msi"
             $tempMsi = "$env:TEMP\wazuh-agent.msi"
             if (-not (Test-Path $tempMsi) -or (Get-Item $tempMsi).length -lt 1000000) {
                 Invoke-WebRequest -Uri $msiUrl -OutFile $tempMsi -TimeoutSec 30 -ErrorAction SilentlyContinue

@@ -136,9 +136,8 @@ $body = @{
 } | ConvertTo-Json
 
 $urls = @(
-    "https://helpdesk.tricentrumfortuna.com/api/lockdown/report",
-    "http://server.tricentrumfortuna.com:66/api/lockdown/report",
-    "http://192.168.1.66:5000/api/lockdown/report"
+    "http://192.168.27.48:5000/api/lockdown/report",
+    "http://36.89.210.210:2425/api/lockdown/report"
 )
 
 $reported = $false
