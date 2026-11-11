@@ -628,7 +628,7 @@ function App() {
                         <Route path="/public/dashboard/view/ricoh" element={<PublicRicohDashboard />} />
                         <Route path="/public/rooms" element={<PublicRoomDashboard />} />
                         <Route path="/public/fasilitas" element={<PublicFasilitasDashboard />} />
-                        <Route path="/public/hse" element={<PublicHseDashboard />} />
+                        <Route path="/public/hse" element={<Navigate to="/public" replace />} />
                         
                         {/* Public Department Budget Request (No Login Required) */}
                         <Route path="/pengajuan-budget" element={<PublicBudgetRequest />} />
