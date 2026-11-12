@@ -73,10 +73,44 @@ try {
     console.log('⚠️ Running in NO-DATABASE mode to keep server alive.');
 }
 
-// 2. SERVE FRONTEND & DOWNLOADS
+// 2. SERVE FRONTEND & DOWNLOADS (with High-Speed Gzip & Immutable Cache for VPN)
+const zlib = require('zlib');
 const distPath = path.join(__dirname, '..', 'dist');
+const gzipCache = new Map();
 console.log('[Backend] Serving system from:', distPath);
-app.use(express.static(distPath));
+
+app.use('/assets', (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const acceptEncoding = req.headers['accept-encoding'] || '';
+    const relPath = req.path.replace(/^\/+/, '');
+    const fullPath = path.join(distPath, 'assets', relPath);
+    if (!fullPath.startsWith(path.join(distPath, 'assets')) || !fs.existsSync(fullPath)) return next();
+
+    const ext = path.extname(fullPath).toLowerCase();
+    if ((ext === '.js' || ext === '.css') && acceptEncoding.includes('gzip')) {
+        try {
+            const stat = fs.statSync(fullPath);
+            const cacheKey = `${fullPath}:${stat.mtimeMs}`;
+            let gzBuf = gzipCache.get(cacheKey);
+            if (!gzBuf) {
+                gzBuf = zlib.gzipSync(fs.readFileSync(fullPath), { level: 6 });
+                gzipCache.set(cacheKey, gzBuf);
+            }
+            res.setHeader('Content-Type', ext === '.js' ? 'application/javascript; charset=utf-8' : 'text/css; charset=utf-8');
+            res.setHeader('Content-Encoding', 'gzip');
+            res.setHeader('Vary', 'Accept-Encoding');
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            res.setHeader('Content-Length', gzBuf.length);
+            return res.end(req.method === 'HEAD' ? undefined : gzBuf);
+        } catch (e) {
+            return next();
+        }
+    }
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    next();
+});
+
+app.use(express.static(distPath, { maxAge: '1h' }));
 
 const downloadsPath = path.join(__dirname, 'services', 'downloads');
 app.use('/ict/downloads', express.static(downloadsPath));
@@ -199,23 +233,9 @@ if (db) {
         safeMount(['/api/global', '/api/network/global'], './routes/global_configurator');
         safeMount(['/api/budgeting', '/api/network/budgeting'], './routes/budgeting');
         
-        // Infra Guard Metrics Proxy & Plant Agent Synchronization
+        // Infra Guard Metrics Proxy & Plant Agent Synchronization (Local Standalone KG)
         app.get('/api/network/infraguard-metrics', async (req, res) => {
             let data = { activeNodes: [], alerts: [], serverMetrics: null };
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2000);
-                const response = await fetch('http://192.168.1.3:8000/api/network/health', {
-                    headers: { 'X-Monitor-Token': 'tr1c3ntrum_s3cr3t_2024' },
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-                if (response.ok) {
-                    data = await response.json();
-                }
-            } catch (err) {
-                // Server 3 / remote timeout fallback
-            }
 
             try {
                 // Synchronize active agent assets from the current organization plant database

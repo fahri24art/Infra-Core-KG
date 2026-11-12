@@ -336,7 +336,7 @@ export default function Assets() {
         .filter(d => {
             const matchesSearch = (d.hostname || d.name || '').toLowerCase().includes(agentSearchTerm.toLowerCase()) ||
                                   (d.ip_address || '').includes(agentSearchTerm);
-            return isAgentOnline(d) && matchesSearch;
+            return matchesSearch;
         })
         .sort((a, b) => {
             const aOnline = isAgentOnline(a) ? 1 : 0;

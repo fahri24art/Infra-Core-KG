@@ -189,7 +189,7 @@ function Send-Telemetry {
     # 7. RustDesk (With Auto-Heal Server 66 Config, Public Key & Direct LAN IP Mode)
     $RustDeskID = $null
     $RDKey = "goI0tPWvahAVECQtsTDn2O2ongsTDSuXG1qIExA8lP4="
-    $RDServer = "192.168.1.66"
+    $RDServer = "server.tricentrumfortuna.com"
     $ConfigPaths = @(
         "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config\RustDesk2.toml",
         "$env:APPDATA\RustDesk\config\RustDesk2.toml",
@@ -454,11 +454,29 @@ function Send-Telemetry {
     $ThreatsCount = 0
     $RecentThreats = @()
     try {
-        $mpThreats = Get-MpThreatDetection -ErrorAction SilentlyContinue
-        if ($mpThreats) {
-            $ThreatsCount = @($mpThreats).Count
-            foreach ($t in ($mpThreats | Select-Object -First 5)) {
-                $RecentThreats += "$($t.InitialDetectionTime): $($t.ProcessName)"
+        $threatCatalog = @{}
+        Get-MpThreat -ErrorAction SilentlyContinue | ForEach-Object {
+            $threatCatalog[$_.ThreatID] = $_.ThreatName
+        }
+        $activeThreats = Get-MpThreat -ErrorAction SilentlyContinue | Where-Object { $_.IsActive -eq $true }
+        if ($activeThreats) {
+            $ThreatsCount = @($activeThreats).Count
+            foreach ($t in ($activeThreats | Select-Object -First 10)) {
+                $resPath = if ($t.Resources) { ($t.Resources | Select-Object -First 1) } else { "System" }
+                $RecentThreats += "[ACTIVE] $($t.ThreatName) | Path: $resPath"
+            }
+        } else {
+            $cutoff = (Get-Date).AddDays(-7)
+            $unresolved = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+                $_.ThreatStatusID -ne 106 -and $_.ActionSuccess -ne $true -and $_.InitialDetectionTime -ge $cutoff
+            }
+            if ($unresolved) {
+                $ThreatsCount = @($unresolved).Count
+                foreach ($t in ($unresolved | Select-Object -First 10)) {
+                    $tName = if ($threatCatalog.ContainsKey($t.ThreatID)) { $threatCatalog[$t.ThreatID] } else { "Suspicious Activity" }
+                    $resPath = if ($t.Resources) { ($t.Resources | Select-Object -First 1) } else { $t.ProcessName }
+                    $RecentThreats += "$($t.InitialDetectionTime.ToString('yyyy-MM-dd HH:mm')) | $tName | Proses: $($t.ProcessName) | File: $resPath"
+                }
             }
         }
     } catch {}
@@ -580,7 +598,7 @@ function Send-Response {
     foreach ($baseUrl in $urlsToTry) {
         try {
             $headers = @{ "x-organization" = $Organization }
-            $responseUri = "${baseUrl}/api/network/agents/command/response/$global:UUID?org=${Organization}"
+            $responseUri = "${baseUrl}/api/network/agents/command/response/${global:UUID}?org=${Organization}"
             Invoke-RestMethod -Uri $responseUri -Method Post -Headers $headers -Body $Payload -ContentType "application/json" -TimeoutSec 7
             break
         } catch {
@@ -597,7 +615,7 @@ function Poll-Commands {
     foreach ($baseUrl in $urlsToTry) {
         try {
             $headers = @{ "x-organization" = $Organization }
-            $pollUri = "${baseUrl}/api/network/agents/poll/$global:UUID?org=${Organization}"
+            $pollUri = "${baseUrl}/api/network/agents/poll/${global:UUID}?org=${Organization}"
             $response = Invoke-RestMethod -Uri $pollUri -Method Get -Headers $headers -TimeoutSec 7
         
         if ($response -and $response.commands) {

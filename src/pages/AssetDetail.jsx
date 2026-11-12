@@ -796,47 +796,86 @@ export default function AssetDetail() {
                 <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50/50 p-6 lg:p-8">
 
                     {/* Security Fabric Threat Alert Banner */}
-                    {form.threats_found > 0 && (
-                        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-rose-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm mb-6 animate-in fade-in">
-                            <div className="flex items-start gap-3">
-                                <div className="p-2 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
-                                    <ShieldAlert size={22} />
+                    {form.threats_found > 0 && (() => {
+                        let recentDefenderThreats = [];
+                        try {
+                            const parsedSpecs = typeof form.specs === 'string' && form.specs.includes('{')
+                                ? JSON.parse(form.specs)
+                                : (typeof form.specs === 'object' ? form.specs : null);
+                            if (Array.isArray(parsedSpecs?.hardening?.recent_threats)) {
+                                recentDefenderThreats = parsedSpecs.hardening.recent_threats;
+                            }
+                        } catch (e) {}
+
+                        return (
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-rose-800 flex flex-col gap-3 shadow-sm mb-6 animate-in fade-in">
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                                    <div className="flex items-start gap-3">
+                                        <div className="p-2 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
+                                            <ShieldAlert size={22} />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-black text-sm uppercase tracking-wide text-rose-900 flex items-center gap-2">
+                                                <span>🚨 Peringatan Keamanan Aktif: {form.threats_found} Ancaman Terdeteksi!</span>
+                                            </h4>
+                                            <p className="text-xs text-rose-700 mt-0.5 leading-relaxed">
+                                                Wazuh SIEM & Windows Defender mencatat aktivitas mencurigakan pada perangkat ini. Segera jalankan remediasi di bawah.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => triggerAgentAction('quick_scan')}
+                                            className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                            <ShieldCheck size={14} /> Scan Sekarang
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => triggerAgentAction('usb_lock_now')}
+                                            className="px-3.5 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                            <Lock size={14} /> Kunci USB
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={clearingThreats}
+                                            onClick={handleClearThreats}
+                                            className="px-3 py-2 bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                        >
+                                            <CheckCircle2 size={14} /> {clearingThreats ? '...' : 'Clear'}
+                                        </button>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h4 className="font-black text-sm uppercase tracking-wide text-rose-900 flex items-center gap-2">
-                                        <span>🚨 Peringatan Keamanan Aktif: {form.threats_found} Ancaman Terdeteksi!</span>
-                                    </h4>
-                                    <p className="text-xs text-rose-700 mt-0.5 leading-relaxed">
-                                        Wazuh SIEM & Windows Defender mencatat aktivitas mencurigakan pada perangkat ini. Segera jalankan remediasi di bawah.
-                                    </p>
-                                </div>
+
+                                {(recentDefenderThreats.length > 0 || securityAlerts.length > 0) && (
+                                    <div className="mt-1 pt-3 border-t border-rose-200/80 bg-white/70 rounded-xl p-3">
+                                        <div className="text-[11px] font-black uppercase tracking-wider text-rose-900 mb-2 flex items-center gap-1.5">
+                                            <span>📋 Rincian Deteksi Ancaman (Windows Defender / Wazuh SIEM):</span>
+                                        </div>
+                                        <ul className="space-y-1.5 text-xs font-mono text-rose-900">
+                                            {recentDefenderThreats.map((item, idx) => (
+                                                <li key={`def-${idx}`} className="flex items-start gap-2 bg-rose-100/60 px-2.5 py-1.5 rounded-lg border border-rose-200">
+                                                    <span className="font-bold text-rose-600 shrink-0">#{idx + 1} [Defender]</span>
+                                                    <span className="break-all">{item}</span>
+                                                </li>
+                                            ))}
+                                            {securityAlerts.slice(0, 5).map((al, idx) => (
+                                                <li key={`waz-${idx}`} className="flex items-start gap-2 bg-rose-100/60 px-2.5 py-1.5 rounded-lg border border-rose-200">
+                                                    <span className="font-bold text-rose-600 shrink-0">[Wazuh Lv.{al.rule_level || al.severity || '!'}]</span>
+                                                    <span className="break-all">
+                                                        {al.timestamp ? new Date(Number(al.timestamp)).toLocaleString('id-ID') + ' — ' : ''}
+                                                        {al.rule_description || al.description || 'Aktivitas mencurigakan terdeteksi'}
+                                                    </span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={() => triggerAgentAction('quick_scan')}
-                                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                >
-                                    <ShieldCheck size={14} /> Scan Sekarang
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => triggerAgentAction('usb_lock_now')}
-                                    className="px-3.5 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                >
-                                    <Lock size={14} /> Kunci USB
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={clearingThreats}
-                                    onClick={handleClearThreats}
-                                    className="px-3 py-2 bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                                >
-                                    <CheckCircle2 size={14} /> {clearingThreats ? '...' : 'Clear'}
-                                </button>
-                            </div>
-                        </div>
-                    )}
+                        );
+                    })()}
                     
                     {/* ── TAB: COMPUTER ── */}
                     {activeTab === 'computer' && (
