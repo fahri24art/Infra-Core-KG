@@ -10,26 +10,34 @@ export default function IntegrationHubTab({ settings, onChange, onSave, isSaving
     const [testResults, setTestResults] = useState({});
     const [testingId, setTestingId] = useState(null);
 
+    const activeOrg = (typeof window !== 'undefined' && sessionStorage.getItem('organization')) || 'TCF-KG';
+    const isKG = activeOrg.toUpperCase().includes('KG');
+    const hostIp = isKG ? '192.168.27.48' : '192.168.1.66';
+
     const infraServices = [
         {
             id: 'glpi_api',
             name: 'GLPI IT Asset Management API',
-            desc: 'REST API GLPI Server 66 untuk inventaris PC, Printer, & Lisensi',
-            host: '192.168.1.66',
+            desc: isKG
+                ? 'REST API GLPI Server Karawang untuk inventaris PC, Printer, & Lisensi'
+                : 'REST API GLPI Server 66 untuk inventaris PC, Printer, & Lisensi',
+            host: hostIp,
             port: 80,
             urlKey: 'glpi_url',
-            defaultUrl: 'http://192.168.1.66/glpi/apirest.php',
+            defaultUrl: `http://${hostIp}/glpi/apirest.php`,
             icon: Server,
             color: 'text-indigo-600'
         },
         {
             id: 'adguard_dns',
             name: 'AdGuard Home DNS Shield',
-            desc: 'DNS Filter, Malware & Phishing Blocker untuk Sadang & Karawang',
-            host: '192.168.1.66',
+            desc: isKG
+                ? 'DNS Filter, Malware & Phishing Blocker Plant Karawang'
+                : 'DNS Filter, Malware & Phishing Blocker untuk Sadang & Karawang',
+            host: hostIp,
             port: 3000,
             urlKey: 'adguard_url',
-            defaultUrl: 'http://192.168.1.66:3000',
+            defaultUrl: `http://${hostIp}:3000`,
             icon: Shield,
             color: 'text-emerald-600'
         },
@@ -37,10 +45,10 @@ export default function IntegrationHubTab({ settings, onChange, onSave, isSaving
             id: 'uptime_kuma',
             name: 'Uptime Kuma Health Hub',
             desc: 'Real-time Heartbeat & Network Uptime Monitoring Daemon',
-            host: '192.168.1.66',
+            host: hostIp,
             port: 3001,
             urlKey: 'kuma_url',
-            defaultUrl: 'http://192.168.1.66:3001',
+            defaultUrl: `http://${hostIp}:3001`,
             icon: Activity,
             color: 'text-rose-600'
         },
@@ -48,21 +56,23 @@ export default function IntegrationHubTab({ settings, onChange, onSave, isSaving
             id: 'whatsapp_gateway',
             name: 'WhatsApp Bot Gateway Matrix',
             desc: 'Core Multi-Device WhatsApp Bot Dispatcher (Port 5002)',
-            host: '192.168.1.66',
+            host: hostIp,
             port: 5002,
             urlKey: 'wa_gateway_url',
-            defaultUrl: 'http://192.168.1.66:5002',
+            defaultUrl: `http://${hostIp}:5002`,
             icon: Radio,
             color: 'text-emerald-600'
         },
         {
             id: 'tailscale_headscale',
-            name: 'Headscale VPN Mesh Controller',
-            desc: 'WireGuard Interconnect Hub Sadang ↔ Karawang (Port 8080)',
-            host: '192.168.1.66',
+            name: isKG ? 'Tailscale / Headscale Mesh Endpoint' : 'Headscale VPN Mesh Controller',
+            desc: isKG
+                ? 'Mesh Interconnect Node Karawang ↔ Pusat (Port 8080)'
+                : 'WireGuard Interconnect Hub Sadang ↔ Karawang (Port 8080)',
+            host: hostIp,
             port: 8080,
             urlKey: 'vpn_controller_url',
-            defaultUrl: 'http://192.168.1.66:8080',
+            defaultUrl: `http://${hostIp}:8080`,
             icon: Network,
             color: 'text-cyan-600'
         }
@@ -70,14 +80,24 @@ export default function IntegrationHubTab({ settings, onChange, onSave, isSaving
 
     const currentServicesSettings = settings.services || {};
 
-    // Live test TCP service port ping
+    // Live test TCP service port ping (parses configured URL host & port)
     const testServicePing = async (service) => {
         setTestingId(service.id);
+        let pingHost = service.host;
+        let pingPort = service.port;
+        try {
+            const rawUrl = currentServicesSettings[service.urlKey] || service.defaultUrl;
+            const u = new URL(rawUrl.startsWith('http') ? rawUrl : `http://${rawUrl}`);
+            if (u.hostname) pingHost = u.hostname;
+            if (u.port) pingPort = parseInt(u.port, 10);
+            else if (u.protocol === 'https:') pingPort = 443;
+            else if (u.protocol === 'http:') pingPort = 80;
+        } catch (e) {}
         try {
             const res = await fetch('/api/settings/test-ping', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ host: service.host, port: service.port, timeoutMs: 3500 })
+                body: JSON.stringify({ host: pingHost, port: pingPort, timeoutMs: 3500 })
             });
             const data = await res.json();
             setTestResults(prev => ({
@@ -105,7 +125,7 @@ export default function IntegrationHubTab({ settings, onChange, onSave, isSaving
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
-                                <h3 className="text-xl font-black tracking-tight">Pusat Konfigurasi & Integrasi Terpadu</h3>
+                                <h3 className="text-xl font-black tracking-tight text-white">Pusat Konfigurasi & Integrasi Terpadu</h3>
                                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                                     Live Ops
                                 </span>

@@ -5,6 +5,9 @@ import {
 } from 'lucide-react';
 
 export default function WhatsAppTesterDrawer({ gatewayUrl }) {
+    const activeOrg = (typeof window !== 'undefined' && sessionStorage.getItem('organization')) || 'TCF-KG';
+    const isKG = activeOrg.toUpperCase().includes('KG');
+    const defaultGwUrl = isKG ? 'http://192.168.27.48:5002' : 'http://192.168.1.66:5002';
     const [targetPhone, setTargetPhone] = useState('6282135353242');
     const [testMessage, setTestMessage] = useState('Uji coba integrasi bot WhatsApp dari Pusat Konfigurasi Admin TCF Power Asset');
     const [isSending, setIsSending] = useState(false);
@@ -21,7 +24,7 @@ export default function WhatsAppTesterDrawer({ gatewayUrl }) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    gatewayUrl: gatewayUrl || 'http://192.168.1.66:5002',
+                    gatewayUrl: gatewayUrl || defaultGwUrl,
                     phone: targetPhone.trim(),
                     message: testMessage.trim()
                 })
@@ -50,7 +53,7 @@ export default function WhatsAppTesterDrawer({ gatewayUrl }) {
                     </div>
                 </div>
                 <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg">
-                    {gatewayUrl || 'http://192.168.1.66:5002'}
+                    {gatewayUrl || defaultGwUrl}
                 </span>
             </div>
 

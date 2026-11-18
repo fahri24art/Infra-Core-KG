@@ -6,8 +6,10 @@ import {
 } from 'lucide-react';
 
 export default function MikrotikOperationsTab({ settings, onChange, onSave, isSaving }) {
+    const activeOrg = (typeof window !== 'undefined' && sessionStorage.getItem('organization')) || 'TCF-KG';
+    const isKG = activeOrg.toUpperCase().includes('KG');
     // Current Plant: 'SG' (Sadang) or 'KG' (Karawang)
-    const [selectedPlant, setSelectedPlant] = useState('SG');
+    const [selectedPlant, setSelectedPlant] = useState(isKG ? 'KG' : 'SG');
 
     // Live API test state
     const [isTesting, setIsTesting] = useState(false);
@@ -215,22 +217,24 @@ export default function MikrotikOperationsTab({ settings, onChange, onSave, isSa
                         <Network size={24} />
                     </div>
                     <div>
-                        <h3 className="text-lg font-black tracking-tight">MikroTik RouterOS Central Controller</h3>
+                        <h3 className="text-lg font-black tracking-tight text-white">MikroTik RouterOS Central Controller</h3>
                         <p className="text-slate-400 text-xs">Pilih router target untuk memantau status API dan aturan firewall pemblokiran.</p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-2 bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700/60">
-                    <button
-                        onClick={() => setSelectedPlant('SG')}
-                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                            selectedPlant === 'SG'
-                                ? 'bg-blue-600 text-white shadow-md'
-                                : 'text-slate-400 hover:text-white'
-                        }`}
-                    >
-                        Plant Sadang (192.168.1.1)
-                    </button>
+                    {!isKG && (
+                        <button
+                            onClick={() => setSelectedPlant('SG')}
+                            className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                                selectedPlant === 'SG'
+                                    ? 'bg-blue-600 text-white shadow-md'
+                                    : 'text-slate-400 hover:text-white'
+                            }`}
+                        >
+                            Plant Sadang (192.168.1.1)
+                        </button>
+                    )}
                     <button
                         onClick={() => setSelectedPlant('KG')}
                         className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
@@ -448,7 +452,7 @@ export default function MikrotikOperationsTab({ settings, onChange, onSave, isSa
                             </label>
                             <input
                                 type="text"
-                                placeholder="Contoh: 192.168.1.185 atau 192.168.2.0/24"
+                                placeholder={selectedPlant === 'KG' ? 'Contoh: 192.168.27.100 atau 192.168.27.0/24' : 'Contoh: 192.168.1.185 atau 192.168.2.0/24'}
                                 value={newAddress}
                                 onChange={(e) => setNewAddress(e.target.value)}
                                 className="w-full px-3 py-2 text-xs font-mono font-bold bg-white border border-slate-200 rounded-xl outline-none focus:border-blue-500"

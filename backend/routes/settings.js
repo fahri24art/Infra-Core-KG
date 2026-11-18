@@ -8,6 +8,10 @@ const db = require('../db');
 const { logAudit } = require('../services/audit');
 const configService = require('../services/configService');
 
+const IS_KG_PLANT = (process.env.PLANT_CODE || 'TCF-KG').toUpperCase().includes('KG');
+const DEFAULT_MIKROTIK_HOST = IS_KG_PLANT ? '192.168.27.1' : '192.168.1.1';
+const DEFAULT_WA_GATEWAY_URL = IS_KG_PLANT ? 'http://192.168.27.48:5002' : 'http://192.168.1.66:5002';
+
 // Helper: Measure TCP connection latency
 function checkTcpPort(host, port, timeoutMs = 3000) {
     return new Promise(resolve => {
@@ -181,7 +185,7 @@ router.post('/test-mikrotik', async (req, res) => {
     // Fallback to DB stored settings if not provided
     if (!host) {
         const row = await db('settings').where({ section: 'network', key: 'mikrotik_ip' }).first();
-        host = row ? row.value : '192.168.1.1';
+        host = row ? row.value : DEFAULT_MIKROTIK_HOST;
     }
     if (!user) {
         const row = await db('settings').where({ section: 'network', key: 'mikrotik_user' }).first();
@@ -243,7 +247,7 @@ router.post('/mikrotik/address-list/query', async (req, res) => {
 
     if (!host) {
         const row = await db('settings').where({ section: 'network', key: 'mikrotik_ip' }).first();
-        host = row ? row.value : '192.168.1.1';
+        host = row ? row.value : DEFAULT_MIKROTIK_HOST;
     }
     if (!user) {
         const row = await db('settings').where({ section: 'network', key: 'mikrotik_user' }).first();
@@ -313,7 +317,7 @@ router.post('/mikrotik/address-list/action', async (req, res) => {
 
     if (!host) {
         const row = await db('settings').where({ section: 'network', key: 'mikrotik_ip' }).first();
-        host = row ? row.value : '192.168.1.1';
+        host = row ? row.value : DEFAULT_MIKROTIK_HOST;
     }
     if (!user) {
         const row = await db('settings').where({ section: 'network', key: 'mikrotik_user' }).first();
@@ -396,7 +400,7 @@ router.post('/test-ping', async (req, res) => {
 // POST /api/settings/test-whatsapp - Send Test WhatsApp Notification
 router.post('/test-whatsapp', async (req, res) => {
     const { gatewayUrl, phone, message } = req.body;
-    const targetUrl = (gatewayUrl || 'http://192.168.1.66:5002').replace(/\/$/, '');
+    const targetUrl = (gatewayUrl || DEFAULT_WA_GATEWAY_URL).replace(/\/$/, '');
 
     try {
         const start = Date.now();

@@ -5,7 +5,9 @@ import {
 } from 'lucide-react';
 
 export default function RicohManagementTab({ settings, onChange, onSave, isSaving }) {
-    const [selectedPlant, setSelectedPlant] = useState('SG');
+    const activeOrg = (typeof window !== 'undefined' && sessionStorage.getItem('organization')) || 'TCF-KG';
+    const isKG = activeOrg.toUpperCase().includes('KG');
+    const [selectedPlant, setSelectedPlant] = useState(isKG ? 'KG' : 'SG');
     const [isTesting, setIsTesting] = useState(false);
     const [pingResult, setPingResult] = useState(null);
 
@@ -13,7 +15,7 @@ export default function RicohManagementTab({ settings, onChange, onSave, isSavin
     const currentRicoh = settings.ricoh || {};
 
     const hostKey = `copier_${prefix}_ip`;
-    const defaultHost = selectedPlant === 'SG' ? '192.168.1.188' : '192.168.27.188';
+    const defaultHost = selectedPlant === 'SG' ? '192.168.1.188' : '192.168.27.11';
     const host = currentRicoh[hostKey] ?? currentRicoh.host_ip ?? defaultHost;
 
     const communityKey = `copier_${prefix}_community`;
@@ -57,7 +59,7 @@ export default function RicohManagementTab({ settings, onChange, onSave, isSavin
                     </div>
                     <div>
                         <div className="flex items-center gap-2">
-                            <h3 className="text-xl font-black tracking-tight">Pusat Pengaturan Ricoh Copier & Kuota</h3>
+                            <h3 className="text-xl font-black tracking-tight text-white">Pusat Pengaturan Ricoh Copier & Kuota</h3>
                             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                                 Anti-Spam Guard
                             </span>
@@ -69,16 +71,18 @@ export default function RicohManagementTab({ settings, onChange, onSave, isSavin
                 </div>
 
                 <div className="flex items-center gap-2 bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700/60">
-                    <button
-                        onClick={() => { setSelectedPlant('SG'); setPingResult(null); }}
-                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                            selectedPlant === 'SG'
-                                ? 'bg-blue-600 text-white shadow-md'
-                                : 'text-slate-400 hover:text-white'
-                        }`}
-                    >
-                        Plant Sadang (192.168.1.188)
-                    </button>
+                    {!isKG && (
+                        <button
+                            onClick={() => { setSelectedPlant('SG'); setPingResult(null); }}
+                            className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                                selectedPlant === 'SG'
+                                    ? 'bg-blue-600 text-white shadow-md'
+                                    : 'text-slate-400 hover:text-white'
+                            }`}
+                        >
+                            Plant Sadang (192.168.1.188)
+                        </button>
+                    )}
                     <button
                         onClick={() => { setSelectedPlant('KG'); setPingResult(null); }}
                         className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
@@ -87,7 +91,7 @@ export default function RicohManagementTab({ settings, onChange, onSave, isSavin
                                 : 'text-slate-400 hover:text-white'
                         }`}
                     >
-                        Plant Karawang (192.168.27.188)
+                        Plant Karawang (192.168.27.11 / .12)
                     </button>
                 </div>
             </div>

@@ -12,7 +12,7 @@ export default function MasterDataConfigurator() {
     const [showModal, setShowModal] = useState(null); // 'category', 'sto', 'node'
     const [formData, setFormData] = useState({});
 
-    const org = sessionStorage.getItem('organization') || 'TCF-SG';
+    const org = sessionStorage.getItem('organization') || 'TCF-KG';
 
     const fetchData = async () => {
         setLoading(true);

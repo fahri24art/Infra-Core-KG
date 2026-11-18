@@ -205,6 +205,9 @@ export default function SystemSettings() {
 
     const userRole = JSON.parse(sessionStorage.getItem('user'))?.role?.toLowerCase();
     const isSuperAdmin = ['super_user', 'superuser', 'administrator', 'admin'].includes(userRole);
+    const activeOrg = (typeof window !== 'undefined' && sessionStorage.getItem('organization')) || 'TCF-KG';
+    const isKG = activeOrg.toUpperCase().includes('KG');
+    const docPrefix = isKG ? 'TCFKG' : 'TCFSG';
 
     const allTabs = [
         { id: 'integrations_hub', label: 'Pusat Konfigurasi & Integrasi', icon: Zap },
@@ -234,7 +237,7 @@ export default function SystemSettings() {
 
     const fetchSettings = async () => {
         try {
-            const org = sessionStorage.getItem('organization') || 'TCF-SG';
+            const org = sessionStorage.getItem('organization') || 'TCF-KG';
             const res = await fetch(`/api/network/settings?organization=${org}`, {
                 headers: { 'X-Organization': org }
             });
@@ -265,7 +268,8 @@ export default function SystemSettings() {
         setSaving(true);
         setStatus(null);
         try {
-            const org = sessionStorage.getItem('organization') || 'TCF-SG';
+            const org = sessionStorage.getItem('organization') || 'TCF-KG';
+            const sectionToSave = activeTab === 'integrations_hub' ? 'services' : activeTab;
             const res = await fetch(`/api/network/settings?organization=${org}`, {
                 method: 'POST',
                 headers: { 
@@ -273,8 +277,8 @@ export default function SystemSettings() {
                     'X-Organization': org
                 },
                 body: JSON.stringify({
-                    section: activeTab,
-                    settings: settings[activeTab] || {}
+                    section: sectionToSave,
+                    settings: settings[sectionToSave] || {}
                 })
             });
             if (res.ok) {
@@ -439,14 +443,18 @@ export default function SystemSettings() {
                                         <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
                                             <div className="space-y-1">
                                                 <div className="text-[10px] font-black uppercase tracking-widest text-blue-400">GLPI Synchronization</div>
-                                                <div className="text-slate-600 font-bold text-sm italic opacity-70">"Pull assets, users, and departments from 192.168.1.66"</div>
+                                                <div className="text-slate-600 font-bold text-sm italic opacity-70">
+                                                    {isKG
+                                                        ? '"Pull assets, users, and departments from Server KG (192.168.27.48)"'
+                                                        : '"Pull assets, users, and departments from 192.168.1.66"'}
+                                                </div>
                                             </div>
                                             <button
                                                 onClick={async () => {
                                                     setSaving(true);
                                                     setStatus(null);
                                                     try {
-                                                        const org = sessionStorage.getItem('organization') || 'TCF-SG';
+                                                        const org = sessionStorage.getItem('organization') || 'TCF-KG';
                                                         const res = await fetch(`/api/network/glpi/sync?organization=${org}`, { 
                                                             method: 'POST',
                                                             headers: { 'X-Organization': org }
@@ -481,7 +489,7 @@ export default function SystemSettings() {
                                         label="osTicket Bridge Endpoint"
                                         value={settings.tickets?.ost_url || ''}
                                         onChange={(v) => handleChange('tickets', 'ost_url', v)}
-                                        placeholder="http://192.168.1.18/api"
+                                        placeholder={isKG ? 'http://192.168.27.48/api' : 'http://192.168.1.18/api'}
                                     />
                                     <SettingsInput
                                         label="Default Ticket Priority"
@@ -581,7 +589,7 @@ export default function SystemSettings() {
                                         label="API URL"
                                         value={settings.virtualization?.proxmox_url_1 || ''}
                                         onChange={(v) => handleChange('virtualization', 'proxmox_url_1', v)}
-                                        placeholder="https://192.168.1.4:8006"
+                                        placeholder={isKG ? 'https://192.168.27.4:8006' : 'https://192.168.1.4:8006'}
                                     />
                                     <SettingsInput
                                         label="Username"
@@ -603,7 +611,7 @@ export default function SystemSettings() {
                                         label="API URL"
                                         value={settings.virtualization?.proxmox_url_2 || ''}
                                         onChange={(v) => handleChange('virtualization', 'proxmox_url_2', v)}
-                                        placeholder="https://192.168.1.5:8006"
+                                        placeholder={isKG ? 'https://192.168.27.5:8006' : 'https://192.168.1.5:8006'}
                                     />
                                     <SettingsInput
                                         label="Username"
@@ -625,7 +633,7 @@ export default function SystemSettings() {
                                         label="IP Address"
                                         value={settings.virtualization?.nas_ip_1 || ''}
                                         onChange={(v) => handleChange('virtualization', 'nas_ip_1', v)}
-                                        placeholder="192.168.1.102"
+                                        placeholder={isKG ? '192.168.27.102' : '192.168.1.102'}
                                     />
                                     <SettingsInput
                                         label="Username"
@@ -646,7 +654,7 @@ export default function SystemSettings() {
                                         label="IP Address"
                                         value={settings.virtualization?.nas_ip_2 || ''}
                                         onChange={(v) => handleChange('virtualization', 'nas_ip_2', v)}
-                                        placeholder="192.168.1.103"
+                                        placeholder={isKG ? '192.168.27.103' : '192.168.1.103'}
                                     />
                                     <SettingsInput
                                         label="Username"
@@ -671,7 +679,7 @@ export default function SystemSettings() {
                                         label="NVR API URL (Stream Entry)"
                                         value={settings.cctv?.nvr_url || ''}
                                         onChange={(v) => handleChange('cctv', 'nvr_url', v)}
-                                        placeholder="http://192.168.1.50/onvif"
+                                        placeholder={isKG ? 'http://192.168.27.50/onvif' : 'http://192.168.1.50/onvif'}
                                     />
                                     <SettingsInput
                                         label="NVR Username"
@@ -705,19 +713,19 @@ export default function SystemSettings() {
                                         label="Infra Guard (Native) URL"
                                         value={settings.security?.infraguard_url || ''}
                                         onChange={(v) => handleChange('security', 'infraguard_url', v)}
-                                        placeholder="http://192.168.1.3"
+                                        placeholder={isKG ? 'http://192.168.27.48' : 'http://192.168.1.3'}
                                     />
                                     <SettingsInput
                                         label="Endpoint Lockdown API"
                                         value={settings.security?.lockdown_url || ''}
                                         onChange={(v) => handleChange('security', 'lockdown_url', v)}
-                                        placeholder="http://192.168.1.8:5000"
+                                        placeholder={isKG ? 'http://192.168.27.48:5000' : 'http://192.168.1.8:5000'}
                                     />
                                     <SettingsInput
                                         label="Wazuh SIEM Manager IP"
                                         value={settings.security?.wazuh_ip || ''}
                                         onChange={(v) => handleChange('security', 'wazuh_ip', v)}
-                                        placeholder="192.168.1.3"
+                                        placeholder={isKG ? '192.168.27.48' : '192.168.1.3'}
                                     />
                                 </>
                             )}
@@ -731,7 +739,7 @@ export default function SystemSettings() {
                                         label="Andon Gateway URL"
                                         value={settings.andon?.gateway_url || ''}
                                         onChange={(v) => handleChange('andon', 'gateway_url', v)}
-                                        placeholder="http://192.168.1.20:3000"
+                                        placeholder={isKG ? 'http://192.168.27.20:3000' : 'http://192.168.1.20:3000'}
                                     />
                                     <SettingsInput
                                         label="API Secret Token"
@@ -762,77 +770,77 @@ export default function SystemSettings() {
                                     </p>
                                     <SettingsInput
                                         label="PC / Laptop Checksheet ID"
-                                        value={settings.documents?.doc_pc || 'TCFSG-FM-ICT-01-03'}
+                                        value={settings.documents?.doc_pc || `${docPrefix}-FM-ICT-01-03`}
                                         onChange={(v) => handleChange('documents', 'doc_pc', v)}
                                     />
                                     <SettingsInput
                                         label="Printer Checksheet ID"
-                                        value={settings.documents?.doc_printer || 'TCFSG-FM-ICT-01-04'}
+                                        value={settings.documents?.doc_printer || `${docPrefix}-FM-ICT-01-04`}
                                         onChange={(v) => handleChange('documents', 'doc_printer', v)}
                                     />
                                     <SettingsInput
                                         label="Network & CCTV Checksheet ID"
-                                        value={settings.documents?.doc_network || 'TCFSG-FM-ICT-01-05'}
+                                        value={settings.documents?.doc_network || `${docPrefix}-FM-ICT-01-05`}
                                         onChange={(v) => handleChange('documents', 'doc_network', v)}
                                     />
                                     <SettingsInput
                                         label="Server & Backup Checksheet ID"
-                                        value={settings.documents?.doc_backup || 'TCFSG-FM-ICT-01-06'}
+                                        value={settings.documents?.doc_backup || `${docPrefix}-FM-ICT-01-06`}
                                         onChange={(v) => handleChange('documents', 'doc_backup', v)}
                                     />
                                     <SettingsInput
                                         label="Smartphone / Tablet Checksheet ID"
-                                        value={settings.documents?.doc_phone || 'TCFSG-FM-ICT-01-08'}
+                                        value={settings.documents?.doc_phone || `${docPrefix}-FM-ICT-01-08`}
                                         onChange={(v) => handleChange('documents', 'doc_phone', v)}
                                     />
                                     <SettingsInput
                                         label="Jadwal Pemeliharaan ID"
-                                        value={settings.documents?.doc_schedule || 'TCFSG-FM-ICT-01-01'}
+                                        value={settings.documents?.doc_schedule || `${docPrefix}-FM-ICT-01-01`}
                                         onChange={(v) => handleChange('documents', 'doc_schedule', v)}
                                     />
                                     <SettingsInput
                                         label="Pelaksanaan Pemeliharaan ID"
-                                        value={settings.documents?.doc_execution || 'TCFSG-FM-ICT-01-02'}
+                                        value={settings.documents?.doc_execution || `${docPrefix}-FM-ICT-01-02`}
                                         onChange={(v) => handleChange('documents', 'doc_execution', v)}
                                     />
                                     <SettingsInput
                                         label="Ticket Helpdesk ID"
-                                        value={settings.documents?.doc_ticket || 'TCFSG-FM-ICT-03-04'}
+                                        value={settings.documents?.doc_ticket || `${docPrefix}-FM-ICT-03-04`}
                                         onChange={(v) => handleChange('documents', 'doc_ticket', v)}
                                     />
                                     <SettingsInput
                                         label="Serah Terima Perangkat (BAST) ID"
-                                        value={settings.documents?.doc_bast || 'TCFSG-FM-ICT-03-02'}
+                                        value={settings.documents?.doc_bast || `${docPrefix}-FM-ICT-03-02`}
                                         onChange={(v) => handleChange('documents', 'doc_bast', v)}
                                     />
                                     <SettingsInput
                                         label="History Perangkat ID"
-                                        value={settings.documents?.doc_history || 'TCFSG-FM-ICT-03-03'}
+                                        value={settings.documents?.doc_history || `${docPrefix}-FM-ICT-03-03`}
                                         onChange={(v) => handleChange('documents', 'doc_history', v)}
                                     />
                                     <SettingsInput
                                         label="ICT Job List ID"
-                                        value={settings.documents?.doc_joblist || 'TCFSG-FM-ICT-01-07'}
+                                        value={settings.documents?.doc_joblist || `${docPrefix}-FM-ICT-01-07`}
                                         onChange={(v) => handleChange('documents', 'doc_joblist', v)}
                                     />
                                     <SettingsInput
                                         label="Asset List ID"
-                                        value={settings.documents?.doc_asset_list || 'TCFSG-FM-ICT-03-01'}
+                                        value={settings.documents?.doc_asset_list || `${docPrefix}-FM-ICT-03-01`}
                                         onChange={(v) => handleChange('documents', 'doc_asset_list', v)}
                                     />
                                     <SettingsInput
                                         label="KPI Jaringan & Server ID"
-                                        value={settings.documents?.doc_kpi || 'TCFSG-FM-ICT-06-02'}
+                                        value={settings.documents?.doc_kpi || `${docPrefix}-FM-ICT-06-02`}
                                         onChange={(v) => handleChange('documents', 'doc_kpi', v)}
                                     />
                                     <SettingsInput
                                         label="Hak Akses Pengguna ID"
-                                        value={settings.documents?.doc_access || 'TCFSG-FM-ICT-06-01'}
+                                        value={settings.documents?.doc_access || `${docPrefix}-FM-ICT-06-01`}
                                         onChange={(v) => handleChange('documents', 'doc_access', v)}
                                     />
                                     <SettingsInput
                                         label="Log Cyber Attack ID"
-                                        value={settings.documents?.doc_cyber || 'TCFSG-FM-ICT-04-01'}
+                                        value={settings.documents?.doc_cyber || `${docPrefix}-FM-ICT-04-01`}
                                         onChange={(v) => handleChange('documents', 'doc_cyber', v)}
                                     />
 
@@ -876,7 +884,7 @@ export default function SystemSettings() {
                                     {(() => {
                                         const waGroups = Array.isArray(settings.monitoring?.wa_groups) 
                                             ? settings.monitoring.wa_groups 
-                                            : ['ICT - TCF', 'Tehnisi Helpdesk TCFKG', 'Tehnisi Helpdesk TCFSG'];
+                                            : (isKG ? ['Tehnisi Helpdesk TCFKG', 'ICT - TCF'] : ['ICT - TCF', 'Tehnisi Helpdesk TCFKG', 'Tehnisi Helpdesk TCFSG']);
                                             
                                         return (
                                         <div className="space-y-6">
@@ -1087,7 +1095,7 @@ export default function SystemSettings() {
                                         );
                                     })()}
                                     <div className="pt-6 border-t border-slate-100">
-                                        <WhatsAppTesterDrawer gatewayUrl={settings.services?.wa_gateway_url || 'http://192.168.1.66:5002'} />
+                                        <WhatsAppTesterDrawer gatewayUrl={settings.services?.wa_gateway_url || (isKG ? 'http://192.168.27.48:5002' : 'http://192.168.1.66:5002')} />
                                     </div>
                                 </>
                             )}
@@ -1212,7 +1220,7 @@ function UserManagementTab() {
     const fetchUsers = async () => {
         setLoading(true);
         try {
-            const org = sessionStorage.getItem('organization') || 'TCF-SG';
+            const org = sessionStorage.getItem('organization') || 'TCF-KG';
             const res = await fetch(`/api/users?organization=${org}`, {
                 headers: { 'X-Organization': org }
             });
@@ -1232,7 +1240,7 @@ function UserManagementTab() {
     const handleDelete = async (user) => {
         if (!window.confirm(`Yakin ingin menghapus ${user.name}?`)) return;
         try {
-            const org = sessionStorage.getItem('organization') || 'TCF-SG';
+            const org = sessionStorage.getItem('organization') || 'TCF-KG';
             await fetch(`/api/users/${user.id}?organization=${user.organization}`, { 
                 method: 'DELETE',
                 headers: { 'X-Organization': org }
@@ -1384,8 +1392,8 @@ function UserManagementTab() {
                                     value={editUser.organization} 
                                     onChange={v => setEditUser({...editUser, organization: v})}
                                     options={[
-                                        {label: 'TCF-SG (Sadang)', value: 'TCF-SG'},
-                                        {label: 'TCF-KG (Karanggan)', value: 'TCF-KG'}
+                                        {label: 'TCF-KG (Karawang)', value: 'TCF-KG'},
+                                        ...(sessionStorage.getItem('organization') === 'TCF-SG' ? [{label: 'TCF-SG (Sadang)', value: 'TCF-SG'}] : [])
                                     ]}
                                 />
                                 <SettingsSelect 
