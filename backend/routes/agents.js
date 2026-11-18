@@ -73,6 +73,103 @@ router.get('/download-offline', (req, res) => {
     }
 });
 
+// GET /api/network/agents/download-android - Serve TCF_Phone_Agent.apk
+router.get('/download-android', (req, res) => {
+    try {
+        const apkCandidates = [
+            path.join(__dirname, '..', 'TCF_Phone_Agent.apk'),
+            path.join(__dirname, '..', '..', 'TCF_Phone_Agent.apk'),
+            '/home/tcfkg/apps/Infra-Core-KG/backend/TCF_Phone_Agent.apk',
+            '/home/tcfkg/apps/Infra-Core-KG/TCF_Phone_Agent.apk',
+        ];
+        const apkPath = apkCandidates.find((p) => fs.existsSync(p));
+        if (!apkPath) {
+            return res.status(404).json({ error: 'Android Phone Agent APK not found on server' });
+        }
+        res.download(apkPath, 'TCF_Phone_Agent.apk');
+    } catch (err) {
+        console.error('[Agent Download Android] Error:', err);
+        res.status(500).json({ error: 'Failed to download Android APK' });
+    }
+});
+
+// GET /api/network/agents/download-phone-adb - Serve ADB Phone Auto-Collector PowerShell Script (KG)
+router.get('/download-phone-adb', (req, res) => {
+    const script = [
+        '# TCF InfraCore - Android Phone ADB Auto-Collector (Plant KG)',
+        '$ErrorActionPreference = "Stop"',
+        '$ServerUrl = "http://192.168.27.48:5000/api/network/agents/register"',
+        '$Org = "TCF-KG"',
+        '',
+        '$Adb = (Get-Command adb -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)',
+        'if (-not $Adb -and (Test-Path "$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe")) {',
+        '    $Adb = "$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe"',
+        '}',
+        'if (-not $Adb) { Write-Host "ERROR: adb.exe tidak ditemukan di PATH atau Android Sdk platform-tools." -ForegroundColor Red; exit 1 }',
+        '',
+        '$lines = & $Adb devices | Select-String "\\tdevice$"',
+        'if (-not $lines) { Write-Host "Tidak ada HP Android terhubung via ADB (aktifkan USB Debugging)." -ForegroundColor Yellow; exit 0 }',
+        '',
+        'foreach ($line in $lines) {',
+        '    $serial = ($line.ToString() -split "\\s+")[0]',
+        '    Write-Host "Collecting $serial ..." -ForegroundColor Cyan',
+        '    $androidId = (& $Adb -s $serial shell settings get secure android_id).Trim()',
+        '    if (-not $androidId -or $androidId -eq "null") { $androidId = $serial }',
+        '    $brand = (& $Adb -s $serial shell getprop ro.product.manufacturer).Trim()',
+        '    $model = (& $Adb -s $serial shell getprop ro.product.model).Trim()',
+        '    $osVer = (& $Adb -s $serial shell getprop ro.build.version.release).Trim()',
+        '    $sdk = (& $Adb -s $serial shell getprop ro.build.version.sdk).Trim()',
+        '    $abi = (& $Adb -s $serial shell getprop ro.product.cpu.abi).Trim()',
+        '    $memLine = (& $Adb -s $serial shell grep MemTotal /proc/meminfo)',
+        '    $ramKb = 0; if ($memLine -match "(\\d+)") { $ramKb = [double]$Matches[1] }',
+        '    $ramGb = [math]::Round($ramKb / 1048576, 1)',
+        '    $dfLine = (& $Adb -s $serial shell df -k /data | Select-Object -Last 1)',
+        '    $parts = ($dfLine -split "\\s+")',
+        '    $totalKb = if ($parts.Count -ge 4) { [double]$parts[1] } else { 0 }',
+        '    $availKb = if ($parts.Count -ge 4) { [double]$parts[3] } else { 0 }',
+        '    $totalGb = [math]::Round($totalKb / 1048576, 0)',
+        '    $freeGb = [math]::Round($availKb / 1048576, 1)',
+        '    $batOut = (& $Adb -s $serial shell dumpsys battery | Out-String)',
+        '    $batLevel = 0; if ($batOut -match "level:\\s*(\\d+)") { $batLevel = [int]$Matches[1] }',
+        '    $ipOut = (& $Adb -s $serial shell ip route | Out-String)',
+        '    $ipAddr = ""; if ($ipOut -match "src\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)") { $ipAddr = $Matches[1] }',
+        '    $userInput = Read-Host "Masukkan Nama User pemegang HP ($brand $model / android-$androidId) [Enter untuk skip]"',
+        '',
+        '    $payload = @{',
+        '        uuid = "android-$androidId"',
+        '        hostname = "android-$androidId"',
+        '        category = "Phone"',
+        '        organization = $Org',
+        '        ip_address = $ipAddr',
+        '        os = "Android $osVer"',
+        '        username = $userInput',
+        '        network_type = "WIFI"',
+        '        agent_version = "TCF-Phone-ADB-1.0"',
+        '        specs = @{',
+        '            manufacturer = $brand',
+        '            model = $model',
+        '            serial_number = $serial',
+        '            android_id = $androidId',
+        '            os = "Android $osVer (API $sdk)"',
+        '            cpu = $abi',
+        '            ram = "$ramGb GB"',
+        '            ram_gb = $ramGb',
+        '            storage_summary = "$totalGb GB Total ($freeGb GB Free)"',
+        '            battery_level = $batLevel',
+        '            device_type = "Phone"',
+        '        }',
+        '    } | ConvertTo-Json -Depth 6',
+        '',
+        '    Invoke-RestMethod -Uri $ServerUrl -Method Post -Body $payload -ContentType "application/json" -Headers @{ "X-Organization" = $Org } -TimeoutSec 10 | Out-Null',
+        '    Write-Host "✅ Synced android-$androidId ($brand $model) ke Server KG!" -ForegroundColor Green',
+        '}',
+    ].join('\r\n');
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="PowerAsset_Phone_Collector_KG.ps1"');
+    res.send(script);
+});
+
 
 // GET /api/agents - List assets with active agents (or all for now to simulate)
 router.get('/', async (req, res) => {
@@ -81,7 +178,7 @@ router.get('/', async (req, res) => {
         const targetDb = req.db || require('../db').getDb(org);
         const agents = await targetDb('assets')
             .leftJoin('users', 'assets.user_id', 'users.id')
-            .whereIn('category', ['Computer', 'Desktop', 'Laptop'])
+            .whereIn('category', ['Computer', 'Desktop', 'Laptop', 'Phone', 'Smartphone', 'Tablet'])
             .select(
                 'assets.id', 'assets.uuid', 'assets.name', 'assets.ip_address', 
                 'assets.agent_status', 'assets.last_agent_sync', 'assets.specs', 
@@ -224,6 +321,9 @@ router.post('/register', async (req, res) => {
 
         if (username) {
             updateData.windows_login = username;
+            if (/phone|tablet|android|ios/i.test(`${req.body.category || ''} ${os || ''} ${hostname || ''}`) && (!asset || !asset.contact)) {
+                updateData.contact = username;
+            }
         }
 
         if (asset && (!asset.name || asset.name.startsWith('Unknown')) && hostname) {
@@ -323,11 +423,24 @@ router.post('/register', async (req, res) => {
             console.log(`[AGENT] Creating new asset in [${orgContext}] with data:`, updateData);
 
             let org = isKG ? 'TCFKG' : 'TCFSG';
+            const incomingCategory = String(req.body.category || (specs && specs.device_type) || '').trim();
+            const osLower = String(os || (specs && specs.os) || '').toLowerCase();
+            const isTablet = /tablet|ipad/i.test(incomingCategory);
+            const isPhone = !isTablet && (
+                /phone|mobile|smartphone/i.test(incomingCategory) ||
+                hostUpper.startsWith('ANDROID-') ||
+                osLower.includes('android') ||
+                osLower.includes('ios')
+            );
+
             let cat = 'PC';
-            const nameUpper = hostUpper;
-            
+            if (isTablet) {
+                cat = 'TB';
+            } else if (isPhone) {
+                cat = 'SP';
+            }
             // Check hostname
-            if (nameUpper.includes('LAPTOP') || nameUpper.includes('NOTEBOOK')) {
+            else if (hostUpper.includes('LAPTOP') || hostUpper.includes('NOTEBOOK')) {
                 cat = 'NB';
             } 
             // Check network type
@@ -341,35 +454,28 @@ router.post('/register', async (req, res) => {
 
             let year = new Date().getFullYear();
             const prefix = `${org}-ICT-${cat}-${year}-`;
-            
-            const prefixPC = `${org}-ICT-PC-${year}-`;
-            const prefixNB = `${org}-ICT-NB-${year}-`;
-            
-            const latestPC = await activeDb('assets').where('inventory_number', 'like', `${prefixPC}%`).orderBy('inventory_number', 'desc').first();
-            const latestNB = await activeDb('assets').where('inventory_number', 'like', `${prefixNB}%`).orderBy('inventory_number', 'desc').first();
-            
+            const prefixesToScan = (cat === 'SP' || cat === 'TB')
+                ? [`${org}-ICT-${cat}-${year}-`]
+                : [`${org}-ICT-PC-${year}-`, `${org}-ICT-NB-${year}-`];
+
             let maxNum = 0;
-            
-            if (latestPC && latestPC.inventory_number) {
-                const parts = latestPC.inventory_number.split('-');
-                const lastPart = parts[parts.length - 1];
-                if (!isNaN(lastPart)) {
-                    const num = parseInt(lastPart);
-                    if (num > maxNum) maxNum = num;
-                }
-            }
-            if (latestNB && latestNB.inventory_number) {
-                const parts = latestNB.inventory_number.split('-');
-                const lastPart = parts[parts.length - 1];
-                if (!isNaN(lastPart)) {
-                    const num = parseInt(lastPart);
-                    if (num > maxNum) maxNum = num;
+            for (const pfx of prefixesToScan) {
+                const latestRow = await activeDb('assets').where('inventory_number', 'like', `${pfx}%`).orderBy('inventory_number', 'desc').first();
+                if (latestRow && latestRow.inventory_number) {
+                    const parts = latestRow.inventory_number.split('-');
+                    const lastPart = parts[parts.length - 1];
+                    if (!isNaN(lastPart)) {
+                        const num = parseInt(lastPart, 10);
+                        if (num > maxNum) maxNum = num;
+                    }
                 }
             }
             
             const nextNum = maxNum + 1;
             const newId = prefix + nextNum.toString().padStart(3, '0');
-            const resolvedDeviceType = cat === 'NB' ? 'Laptop' : 'Desktop';
+            const resolvedDeviceType = cat === 'TB'
+                ? 'Tablet'
+                : (cat === 'SP' ? 'Phone' : (cat === 'NB' ? 'Laptop' : 'Desktop'));
 
             const [inserted] = await activeDb('assets').insert({
                 name: hostname || 'Unknown Device',

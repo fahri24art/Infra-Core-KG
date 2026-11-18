@@ -7,19 +7,9 @@ import { CartProvider } from './context/CartContext';
 import axios from 'axios';
 
 // ─── Global Axios Interceptor ─────────────────────────────────────────────────
-// Helper to get organization: Admin can switch via param/session; non-admin strictly bound to their account
+// Helper to get organization: Server 66 is dedicated exclusively to TCF-SG (Sadang)
 const getOrganization = () => {
-    try {
-        const user = JSON.parse(sessionStorage.getItem('user') || 'null');
-        if (user && user.role) {
-            const isAdmin = ['super_user', 'superuser', 'administrator', 'admin'].includes(user.role.toLowerCase());
-            if (!isAdmin && user.organization) {
-                return user.organization;
-            }
-        }
-    } catch (e) {}
-    const params = new URLSearchParams(window.location.search);
-    return params.get('org') || sessionStorage.getItem('organization') || 'TCF-SG';
+    return 'TCF-SG';
 };
 
 // Otomatis tambah X-Organization header ke SEMUA request axios di seluruh app
@@ -60,6 +50,10 @@ axios.interceptors.response.use(
         if (error.response?.status === 401) {
             const currentPath = window.location.pathname || '';
             const isPublicPage = currentPath.startsWith('/pengajuan-budget') || 
+                                 currentPath.startsWith('/permintaan-budget') ||
+                                 currentPath.startsWith('/public') ||
+                                 currentPath.startsWith('/ricoh/request') ||
+                                 currentPath.startsWith('/pengajuan-kuota') ||
                                  currentPath.startsWith('/portal') || 
                                  currentPath.startsWith('/login') ||
                                  currentPath.startsWith('/ict/downloads');

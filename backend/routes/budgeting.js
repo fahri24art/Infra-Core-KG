@@ -3704,6 +3704,8 @@ router.post('/activity-plans/clone-year', async (req, res) => {
     }
 });
 
+router.use('/cost-reductions', require('./budgeting_cr')({ getDb, readStore, saveStore }));
+
 router.parseAssetSpecs = parseAssetSpecs;
 router.evaluateAssetIK = evaluateAssetIK;
 router.readStore = readStore;

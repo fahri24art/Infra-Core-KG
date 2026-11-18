@@ -18,17 +18,48 @@ router.post('/login', async (req, res) => {
     const cleanPass = password.trim();
     
     // Initial requested organization
-    let requestedOrg = organization || req.headers['x-organization'] || 'TCF-SG';
+    let requestedOrg = organization || req.headers['x-organization'] || (process.env.PLANT_CODE || 'TCF-KG');
     let resolvedOrg = requestedOrg;
     
     try {
+        const checkPasswordMatch = (candidate) => {
+            const dbPass = (candidate.password || '').toString();
+            const cleanDbPass = dbPass.replace(/[\.,\s\-]/g, '').trim();
+            const cleanInputPass = cleanPass.replace(/[\.,\s\-]/g, '');
+            return (dbPass === password) || 
+                   (dbPass.trim() === cleanPass) ||
+                   (cleanDbPass.length > 0 && cleanDbPass === cleanInputPass);
+        };
+
         const findUserInOrg = async (targetOrg) => {
             const orgDb = getDb(targetOrg);
-            return await orgDb('users')
-                .whereRaw('LOWER(TRIM(username)) = ?', [cleanId])
-                .orWhereRaw('LOWER(TRIM(name)) = ?', [cleanId])
-                .orWhereRaw('LOWER(TRIM(email)) = ?', [cleanId])
-                .first();
+            const cleanIdNoSpace = cleanId.replace(/\s+/g, '');
+            const cleanIdNoDot = cleanId.replace(/[\.,\s\-]/g, '');
+
+            const candidates = await orgDb('users')
+                .leftJoin('hr_employees', 'users.hr_employee_id', 'hr_employees.id')
+                .whereRaw('LOWER(TRIM(users.username)) = ?', [cleanId])
+                .orWhereRaw('LOWER(TRIM(users.name)) = ?', [cleanId])
+                .orWhereRaw('LOWER(REPLACE(TRIM(users.name), \' \', \'\')) = ?', [cleanIdNoSpace])
+                .orWhereRaw('LOWER(TRIM(COALESCE(users.email, \'\'))) = ?', [cleanId])
+                .orWhereRaw('LOWER(REPLACE(REPLACE(TRIM(COALESCE(hr_employees.nik, \'\')), \'.\', \'\'), \',\', \'\')) = ?', [cleanIdNoDot])
+                .orWhereRaw('LOWER(SPLIT_PART(TRIM(users.name), \' \', 1)) = ?', [cleanId])
+                .orWhereRaw('LOWER(SPLIT_PART(TRIM(users.username), \' \', 1)) = ?', [cleanId])
+                .orWhereRaw('LOWER(TRIM(users.name)) LIKE ?', [cleanId + ' %'])
+                .select(
+                    'users.*',
+                    'hr_employees.nik as hr_nik',
+                    'hr_employees.position as hr_position',
+                    'hr_employees.department as hr_department',
+                    'hr_employees.phone as hr_phone'
+                );
+
+            if (!candidates || candidates.length === 0) return null;
+            if (candidates.length === 1) return candidates[0];
+
+            // If multiple users match (e.g. same first name "ahmad"), pick the one whose password (NIK) matches
+            const matched = candidates.find(checkPasswordMatch);
+            return matched || candidates[0];
         };
 
         // 1. Try finding in requested organization
@@ -61,16 +92,26 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: 'Username atau Email tidak ditemukan.' });
         }
 
-        // Compare password (support exact and trimmed, with master fallback for admin)
+        // Compare password (support exact, trimmed, and clean NIK without dots)
         const dbPass = (user.password || '').toString();
-        const isAdminMasterPass = (cleanId === 'admin' || user.role === 'admin' || user.username === 'admin') && (cleanPass === 'admin123' || cleanPass === 'Nevergiveup572*');
-        if (dbPass !== password && dbPass.trim() !== cleanPass && !isAdminMasterPass) {
+        const cleanDbPass = dbPass.replace(/[\.,\s\-]/g, '').trim();
+        const cleanInputPass = cleanPass.replace(/[\.,\s\-]/g, '');
+
+        const isPassMatch = (dbPass === password) || 
+                            (dbPass.trim() === cleanPass) ||
+                            (cleanDbPass.length > 0 && cleanDbPass === cleanInputPass);
+
+        if (!isPassMatch) {
             console.log('[AUTH] Invalid password for:', cleanId);
             return res.status(401).json({ error: 'Password salah. Periksa kembali huruf besar/kecil.' });
         }
 
         // Return user info (excluding password) with organization and RBAC plant permissions
         const { password: _, ...userInfo } = user;
+        userInfo.nik = user.hr_nik || user.nik || user.employee_id || '';
+        userInfo.position = user.hr_position || 'Staff';
+        userInfo.department = user.department || user.hr_department || 'General';
+        userInfo.phone = user.whatsapp || user.hr_phone || '';
         const isSuperAdmin = ['super_user', 'superuser', 'administrator', 'admin'].includes((user.role || '').toLowerCase());
         userInfo.organization = resolvedOrg;
         userInfo.can_switch_plant = isSuperAdmin;

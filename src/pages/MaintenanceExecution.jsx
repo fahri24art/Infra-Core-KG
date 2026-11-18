@@ -5,6 +5,7 @@ import { Save, ArrowLeft, Printer, CheckCircle, CheckSquare, Clock, Monitor, Net
 import PCMaintenanceForm from './PCMaintenanceForm';
 import PrinterMaintenanceForm from './PrinterMaintenanceForm';
 import PhoneMaintenanceForm from './PhoneMaintenanceForm';
+import CctvMaintenanceForm from './CctvMaintenanceForm';
 import logoTCF from '../assets/Logo_TCF_Sec_Processed.png';
 
 const loadImage = (src) => {
@@ -182,6 +183,21 @@ export default function MaintenanceExecution() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [searchParams] = useState(new URLSearchParams(window.location.search));
+    const targetYear = Number(searchParams.get('year')) || new Date().getFullYear();
+
+    const getReturnPath = (resolvedAsset = null) => {
+        const returnTab = searchParams.get('returnTab') || 'year';
+        const scopeParam = searchParams.get('scope');
+        const assetCat = (resolvedAsset?.category || '').toLowerCase();
+        const inferredScope = scopeParam || ((assetCat.includes('cctv') || assetCat.includes('camera')) ? 'cctv' : '');
+        const params = new URLSearchParams();
+        params.set('tab', returnTab);
+        if (inferredScope) params.set('scope', inferredScope);
+        if (searchParams.get('year')) params.set('year', searchParams.get('year'));
+        if (searchParams.get('semester')) params.set('semester', searchParams.get('semester'));
+        return `/ict/maintenance?${params.toString()}`;
+    };
+
     const [form, setForm] = useState({
         asset_id: '',
         maintenance_date: new Date().toISOString().split('T')[0],
@@ -193,6 +209,7 @@ export default function MaintenanceExecution() {
         checksheet_data: {},
         plan_id: searchParams.get('planId') || null,
         week_key: searchParams.get('weekKey') || null,
+        year: targetYear,
         maintenance_type: searchParams.get('type') || 'Semester',
         checked_by: null,
         checked_at: null,
@@ -224,7 +241,7 @@ export default function MaintenanceExecution() {
             const weekKey = searchParams.get('weekKey');
             const type = searchParams.get('type') || 'Semester';
             if (weekKey) {
-                fetchRecord(id, weekKey, new Date().getFullYear(), type);
+                fetchRecord(id, weekKey, targetYear, type);
             }
         }
     }, [id]);
@@ -292,9 +309,12 @@ export default function MaintenanceExecution() {
         } else if (cat.includes('printer')) {
             docNo = 'TCFSG-FM-ICT-01-04';
             title = 'CHECKSHEET PEMELIHARAAN PRINTER';
+        } else if (cat.includes('cctv') || cat.includes('camera')) {
+            docNo = 'TCFSG-FM-ICT-01-05';
+            title = 'CHECKSHEET PEMELIHARAAN CCTV & SURVEILLANCE';
         } else if (cat.includes('network') || cat.includes('server')) {
             docNo = 'TCFSG-FM-ICT-01-05';
-            title = 'CHECKSHEET PEMELIHARAAN JARINGAN & CCTV';
+            title = 'CHECKSHEET PEMELIHARAAN JARINGAN & SERVER';
         } else if (cat.includes('backup')) {
             docNo = 'TCFSG-FM-ICT-01-06';
             title = 'CHECKSHEET BACKUP DATA';
@@ -396,6 +416,8 @@ export default function MaintenanceExecution() {
 
         const payload = {
             ...form,
+            status: form.status || 'Completed',
+            year: form.year || targetYear,
             checksheet_data: currentChecksheetData
         };
 
@@ -407,12 +429,15 @@ export default function MaintenanceExecution() {
                 body: JSON.stringify(payload)
             });
             if (res.ok) {
-                navigate('/ict/maintenance');
+                navigate(getReturnPath(asset));
             } else {
-                console.error('Failed to save record.');
+                const errData = await res.json().catch(() => ({}));
+                console.error('Failed to save record.', errData);
+                alert('Gagal menyimpan checksheet: ' + (errData.error || errData.details || res.statusText));
             }
         } catch (err) {
             console.error('Error saving record', err);
+            alert('Gagal menyimpan checksheet: ' + err.message);
         }
     };
 
@@ -420,17 +445,22 @@ export default function MaintenanceExecution() {
         if (!asset || !form) return { content: null, isCustom: false };
 
         const cat = (asset.category || '').toLowerCase();
-        if (cat.includes('computer') || cat.includes('laptop') || cat.includes('desktop')) {
+        if (cat.includes('computer') || cat.includes('laptop') || cat.includes('desktop') || cat.includes('notebook') || cat === 'pc') {
             return {
                 content: <PCMaintenanceForm asset={asset} formData={form.checksheet_data} onChange={handleChecksheetChange} onSubmit={handleSubmit} />,
                 isCustom: true
             };
-        } else if (cat.includes('printer')) {
+        } else if (cat.includes('printer') || cat.includes('scanner')) {
             return {
                 content: <PrinterMaintenanceForm asset={asset} formData={form.checksheet_data} onChange={handleChecksheetChange} onSubmit={handleSubmit} />,
                 isCustom: true
             };
-        } else if (cat.includes('network') || cat.includes('server')) {
+        } else if (cat.includes('cctv') || cat.includes('camera')) {
+            return {
+                content: <CctvMaintenanceForm asset={asset} formData={form.checksheet_data} onChange={handleChecksheetChange} onSubmit={handleSubmit} />,
+                isCustom: true
+            };
+        } else if (cat.includes('network') || cat.includes('server') || cat.includes('switch') || cat.includes('router') || cat.includes('mikrotik')) {
             return {
                 content: <NetworkChecksheet data={form.checksheet_data} onChange={handleChecksheetChange} />,
                 isCustom: false
@@ -443,14 +473,7 @@ export default function MaintenanceExecution() {
         }
 
         return {
-            content: (
-                <div className="space-y-3">
-                    <p className="text-sm text-slate-500">No specific checksheet found for this asset category. Displaying raw data:</p>
-                    <pre className="bg-slate-50 p-4 rounded-xl text-xs overflow-auto border border-[#E1E1E1]">
-                        {JSON.stringify(form.checksheet_data, null, 2)}
-                    </pre>
-                </div>
-            ),
+            content: <NetworkChecksheet data={form.checksheet_data} onChange={handleChecksheetChange} />,
             isCustom: false
         };
     };
@@ -467,7 +490,7 @@ export default function MaintenanceExecution() {
             {/* Header Area */}
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
-                    <button onClick={() => navigate('/ict/maintenance')} className="p-3 bg-white hover:bg-slate-50 border border-[#E1E1E1] rounded-2xl transition-all text-slate-400 hover:text-slate-900 shadow-sm">
+                    <button onClick={() => navigate(getReturnPath(asset))} className="p-3 bg-white hover:bg-slate-50 border border-[#E1E1E1] rounded-2xl transition-all text-slate-400 hover:text-slate-900 shadow-sm">
                         <ArrowLeft size={20} />
                     </button>
                     <div>
@@ -489,7 +512,7 @@ export default function MaintenanceExecution() {
             </div>
 
             {/* Asset Meta Box */}
-            <div className="card-unifi p-5 bg-slate-900 border-none shadow-xl flex flex-col md:flex-row justify-between items-center gap-5">
+            <div className="p-5 bg-slate-900 text-white rounded-3xl border border-slate-800 shadow-xl flex flex-col md:flex-row justify-between items-center gap-5">
                 <div className="flex flex-col gap-1">
                     <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]">{asset.category} UNIT</span>
                     <h2 className="text-3xl font-black text-white tracking-tight leading-none">{asset.inventory_number || asset.name}</h2>

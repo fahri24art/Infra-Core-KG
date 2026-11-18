@@ -2,13 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Plus, Search, Clock, CheckCircle, MessageCircle, Send, XCircle, AlertCircle, ChevronLeft, ChevronRight,
-    Ticket, Activity, User, Monitor, FileText, Paperclip, LayoutGrid, LogOut, CheckSquare, Shield, Settings, LifeBuoy
+    Ticket, Activity, User, Monitor, FileText, Paperclip, LayoutGrid, LogOut, CheckSquare, Shield, Settings, LifeBuoy, Printer,
+    FileSpreadsheet, Laptop, KeyRound, Sparkles, RefreshCw, Check, ArrowRight, CheckCircle2, AlertTriangle, Building2, Smartphone, Copy
 } from 'lucide-react';
 
 import SupportLogo from '../assets/SupportCenterLogo.png';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import SignatureModal from '../components/ui/SignatureModal';
+import PublicBudgetRequest from './PublicBudgetRequest';
+import http from '../services/http';
 
 export default function SupportCenter() {
     const navigate = useNavigate();
@@ -22,6 +25,26 @@ export default function SupportCenter() {
     const [allAssets, setAllAssets] = useState([]);
     const [assetSearch, setAssetSearch] = useState('');
     const [signatureConfig, setSignatureConfig] = useState(null);
+
+    // Quota Self-Service State (Auto-Integrated)
+    const [selectedQuotaAssetId, setSelectedQuotaAssetId] = useState('');
+    const [useCustomDevice, setUseCustomDevice] = useState(false);
+    const [customDeviceName, setCustomDeviceName] = useState('');
+    const [ricohPin, setRicohPin] = useState('');
+    const [quotaType, setQuotaType] = useState('BW'); // 'BW' | 'COLOR' | 'COPIER_BW' | 'COPIER_COLOR' | 'CUSTOM'
+    const [amountBw, setAmountBw] = useState(50);
+    const [amountColor, setAmountColor] = useState(0);
+    const [amountCopierBw, setAmountCopierBw] = useState(0);
+    const [amountCopierColor, setAmountCopierColor] = useState(0);
+    const [quotaReason, setQuotaReason] = useState('');
+    const [quotaPhone, setQuotaPhone] = useState('');
+    const [submittingQuota, setSubmittingQuota] = useState(false);
+    const [quotaSuccessMsg, setQuotaSuccessMsg] = useState('');
+    const [quotaErrorMsg, setQuotaErrorMsg] = useState('');
+    const [myQuotaRequests, setMyQuotaRequests] = useState([]);
+    const [allPublicDevices, setAllPublicDevices] = useState([]);
+    const [publicDeviceQuery, setPublicDeviceQuery] = useState('');
+    const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
 
     // Form State
     const [ticketForm, setTicketForm] = useState({
@@ -45,12 +68,37 @@ export default function SupportCenter() {
         }
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
-        fetchMyData(parsedUser.id);
+        if (parsedUser.phone) setQuotaPhone(parsedUser.phone);
+        fetchMyData(parsedUser.id, parsedUser);
+        fetchPublicDevices();
     }, []);
 
-    const fetchMyData = async (userId) => {
+    const fetchPublicDevices = async () => {
         try {
-            const org = user?.organization || 'TCF-SG';
+            const res = await http.get('/api/ricoh/public-devices');
+            if (Array.isArray(res.data)) {
+                setAllPublicDevices(res.data);
+            }
+        } catch(e) {}
+    };
+
+    const fetchMyQuotaRequests = async (currentUser, compName) => {
+        try {
+            const u = currentUser || user;
+            const params = new URLSearchParams();
+            if (compName) params.append('device_name', compName);
+            if (u?.name) params.append('applicant_name', u.name);
+            if (u?.nik) params.append('applicant_nik', u.nik);
+            const res = await http.get(`/api/ricoh/my-requests?${params.toString()}`);
+            if (Array.isArray(res.data)) {
+                setMyQuotaRequests(res.data);
+            }
+        } catch(e) {}
+    };
+
+    const fetchMyData = async (userId, currentUser) => {
+        try {
+            const u = currentUser || user;
             const [ticketsRes, assetsRes, approvalsRes, allAssetsRes] = await Promise.all([
                 fetch(`/api/network/portal/my-tickets/${userId}`),
                 fetch(`/api/network/portal/my-assets/${userId}`),
@@ -58,10 +106,28 @@ export default function SupportCenter() {
                 fetch(`/api/network/assets`)
             ]);
 
-            setTickets(ticketsRes.ok ? await ticketsRes.json() : []);
-            setAssets(assetsRes.ok ? await assetsRes.json() : []);
-            setApprovals(approvalsRes.ok ? await approvalsRes.json() : []);
-            setAllAssets(allAssetsRes.ok ? await allAssetsRes.json() : []);
+            const loadedTickets = ticketsRes.ok ? await ticketsRes.json() : [];
+            const loadedAssets = assetsRes.ok ? await assetsRes.json() : [];
+            const loadedApprovals = approvalsRes.ok ? await approvalsRes.json() : [];
+            const loadedAllAssets = allAssetsRes.ok ? await allAssetsRes.json() : [];
+
+            setTickets(loadedTickets);
+            setAssets(loadedAssets);
+            setApprovals(loadedApprovals);
+            setAllAssets(loadedAllAssets);
+
+            // Pre-select primary asset for quota and ticket
+            if (loadedAssets.length > 0) {
+                const primary = loadedAssets.find(a => a.ricoh_quota_id) || loadedAssets[0];
+                if (primary) {
+                    setSelectedQuotaAssetId(primary.id);
+                    if (primary.ricoh_user_code) setRicohPin(primary.ricoh_user_code);
+                    setTicketForm(prev => ({ ...prev, asset_id: primary.id }));
+                    fetchMyQuotaRequests(u, primary.name);
+                }
+            } else {
+                fetchMyQuotaRequests(u, '');
+            }
         } catch (err) {
             console.error('Failed to fetch data', err);
             setTickets([]);
@@ -150,6 +216,85 @@ export default function SupportCenter() {
             setActiveTab('detail');
         } catch (err) {
             console.error(err);
+        }
+    };
+
+    const activeQuotaAsset = assets.find(a => String(a.id) === String(selectedQuotaAssetId)) || assets.find(a => a.ricoh_quota_id) || assets[0] || null;
+
+    const handleSelectQuotaAsset = (assetId) => {
+        if (assetId === '__OTHER__') {
+            setUseCustomDevice(true);
+            setSelectedQuotaAssetId('__OTHER__');
+            setRicohPin('');
+        } else {
+            setUseCustomDevice(false);
+            setSelectedQuotaAssetId(assetId);
+            const found = assets.find(a => String(a.id) === String(assetId));
+            if (found && found.ricoh_user_code) {
+                setRicohPin(found.ricoh_user_code);
+            }
+            if (found) fetchMyQuotaRequests(user, found.name);
+        }
+    };
+
+    const handlePresetQuota = (type, bw, col, copBw, copCol = 0) => {
+        setQuotaType(type);
+        setAmountBw(bw);
+        setAmountColor(col);
+        setAmountCopierBw(copBw);
+        setAmountCopierColor(copCol);
+    };
+
+    const handleSubmitQuota = async (e) => {
+        if (e) e.preventDefault();
+        setQuotaErrorMsg('');
+        setQuotaSuccessMsg('');
+
+        const targetComp = useCustomDevice ? customDeviceName.trim() : (activeQuotaAsset?.name || '');
+        if (!targetComp) {
+            setQuotaErrorMsg('Nama komputer / perangkat belum dipilih.');
+            return;
+        }
+        if (!ricohPin.trim()) {
+            setQuotaErrorMsg('PIN Ricoh (User Code 4-digit) wajib dimasukkan.');
+            return;
+        }
+        if (!quotaReason.trim()) {
+            setQuotaErrorMsg('Alasan pengajuan penambahan kuota wajib diisi.');
+            return;
+        }
+
+        try {
+            setSubmittingQuota(true);
+            const payload = {
+                device_id: useCustomDevice ? null : (activeQuotaAsset?.ricoh_quota_id || activeQuotaAsset?.id || null),
+                computer_name: targetComp,
+                pin: ricohPin.trim(),
+                applicant_name: user?.name || user?.full_name || 'Staff',
+                applicant_nik: user?.nik || '',
+                applicant_phone: quotaPhone.trim() || user?.phone || '',
+                request_type: quotaType,
+                amount_bw: Number(amountBw) || 0,
+                amount_color: Number(amountColor) || 0,
+                amount_copier_bw: Number(amountCopierBw) || 0,
+                amount_copier_color: Number(amountCopierColor) || 0,
+                amount_copier: (Number(amountCopierBw) || 0) + (Number(amountCopierColor) || 0),
+                reason: quotaReason.trim()
+            };
+
+            const res = await http.post('/api/ricoh/request-submit', payload);
+            if (res.data && res.data.success) {
+                setQuotaSuccessMsg('✅ Pengajuan penambahan kuota berhasil dikirim! Menunggu persetujuan Admin ICT.');
+                setQuotaReason('');
+                fetchMyData(user.id);
+                fetchMyQuotaRequests(user, targetComp);
+            } else {
+                setQuotaErrorMsg(res.data?.error || 'Gagal mengirim pengajuan.');
+            }
+        } catch (err) {
+            setQuotaErrorMsg(err.response?.data?.error || err.message || 'Gagal mengirim pengajuan.');
+        } finally {
+            setSubmittingQuota(false);
         }
     };
 
@@ -281,16 +426,21 @@ export default function SupportCenter() {
                             <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 px-3">Self-Service Modules</h3>
                             <ul className="space-y-1">
                                 {[
-                                    { id: 'home', icon: LayoutGrid, label: 'Dashboard' },
-                                    { id: 'status', icon: Ticket, label: 'My Tickets', badge: tickets.length },
-                                    { id: 'approvals', icon: CheckSquare, label: 'Approvals', badge: approvals.length },
-                                    { id: 'assets', icon: Monitor, label: 'My Assets', badge: assets.length }
+                                    { id: 'home', icon: LayoutGrid, label: 'Dashboard Utama' },
+                                    { id: 'ricoh', icon: Printer, label: 'Pengajuan Kuota Ricoh' },
+                                    { id: 'budget', icon: FileSpreadsheet, label: 'Pengajuan Fasilitas / Budget' },
+                                    { id: 'status', icon: Ticket, label: 'Tiket Saya', badge: tickets.length },
+                                    { id: 'assets', icon: Monitor, label: 'Perangkat Saya', badge: assets.length },
+                                    { id: 'approvals', icon: CheckSquare, label: 'Persetujuan Checksheet', badge: approvals.length }
                                 ].map(tab => {
                                     const isActive = activeTab === tab.id || (activeTab === 'detail' && tab.id === 'status');
                                     return (
                                         <li key={tab.id}>
                                             <button 
-                                                onClick={() => { setActiveTab(tab.id); if(tab.id !== 'detail') setSelectedTicket(null); }} 
+                                                onClick={() => { 
+                                                    setActiveTab(tab.id); 
+                                                    if (tab.id !== 'detail') setSelectedTicket(null); 
+                                                }} 
                                                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors ${isActive ? 'bg-blue-50 font-bold text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}
                                             >
                                                 <div className="flex items-center gap-3">
@@ -317,46 +467,173 @@ export default function SupportCenter() {
                             {/* HOME DASHBOARD */}
                             {activeTab === 'home' && (
                                 <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                                    <div className="relative overflow-hidden bg-gradient-to-br from-blue-900 via-indigo-900 to-slate-900 p-5 md:p-10 rounded-3xl shadow-xl flex flex-col md:flex-row items-center gap-5 border border-white/10">
-                                        <div className="absolute top-0 right-0 -translate-y-1/4 translate-x-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl pointer-events-none"></div>
-                                        <div className="absolute bottom-0 left-0 translate-y-1/4 -translate-x-1/4 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
-                                        
-                                        <div className="relative z-10 w-24 h-24 bg-white/10 backdrop-blur-md text-white rounded-2xl flex items-center justify-center border border-white/20 shrink-0 shadow-2xl">
-                                            <LifeBuoy size={40} className="drop-shadow-lg" />
+                                    {/* Welcome Hero Banner */}
+                                    <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-indigo-950 to-blue-950 p-6 md:p-8 rounded-3xl shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-white/10">
+                                        <div className="absolute top-0 right-0 -translate-y-1/4 translate-x-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                                        <div className="absolute bottom-0 left-0 translate-y-1/4 -translate-x-1/4 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+                                        <div className="flex flex-col sm:flex-row items-center gap-5 relative z-10 text-center sm:text-left">
+                                            <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-2xl shadow-xl border border-white/20 shrink-0">
+                                                {user?.name?.charAt(0) || 'U'}
+                                            </div>
+                                            <div>
+                                                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-2">
+                                                    <span className="text-xs font-bold text-blue-300 bg-blue-500/20 px-3 py-0.5 rounded-full border border-blue-400/30">
+                                                        {user?.department || 'Departemen'}
+                                                    </span>
+                                                    {user?.nik && (
+                                                        <span className="text-xs font-bold text-slate-300 bg-white/10 px-3 py-0.5 rounded-full border border-white/10">
+                                                            NIK: {user.nik}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-xs font-bold text-emerald-300 bg-emerald-500/20 px-3 py-0.5 rounded-full border border-emerald-400/30">
+                                                        {user?.organization || 'TCF-SG'}
+                                                    </span>
+                                                </div>
+                                                <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">
+                                                    Halo, <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-indigo-200">{user?.name}</span>
+                                                </h2>
+                                                <p className="text-blue-100/70 text-xs md:text-sm mt-1 max-w-xl">
+                                                    Portal mandiri karyawan: Ajukan kuota cetak Ricoh, permintaan fasilitas & budget ICT, atau laporkan kendala teknis tanpa perlu mengetik ulang data profil Anda.
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div className="relative z-10 text-center md:text-left">
-                                            <h2 className="text-3xl md:text-4xl font-black text-white tracking-tight uppercase drop-shadow-md">Welcome to <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-indigo-300">Support Center ICT & HRGA</span></h2>
-                                            <p className="text-blue-100/80 mt-3 font-medium max-w-2xl text-sm md:text-base leading-relaxed">This is your comprehensive Employee Self-Service Portal. Request HRD/GA support, book meeting rooms, view assets assigned to you, and securely approve maintenance checksheets.</p>
+
+                                        {/* Primary Device Quick Glance Badge */}
+                                        <div className="relative z-10 bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/15 text-left w-full sm:w-auto min-w-[220px]">
+                                            <div className="flex items-center gap-2 text-blue-200 text-xs font-bold uppercase tracking-wider mb-1">
+                                                <Laptop size={14} /> Perangkat Terdaftar
+                                            </div>
+                                            <div className="text-white font-black text-base truncate">
+                                                {activeQuotaAsset?.name || 'Belum Terdaftar'}
+                                            </div>
+                                            <div className="text-[11px] text-blue-200/70 mt-0.5 flex items-center justify-between">
+                                                <span>{activeQuotaAsset?.category || 'Hardware PC'}</span>
+                                                {activeQuotaAsset?.ricoh_quota_id && (
+                                                    <span className="text-emerald-300 font-bold">● Ricoh Aktif</span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <div className="bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-white/50 shadow-lg shadow-amber-500/5 group hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
-                                            <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-                                            <div className="flex justify-between items-start mb-4">
-                                                <div className="w-14 h-14 bg-gradient-to-br from-amber-100 to-orange-100 text-amber-600 rounded-2xl flex items-center justify-center shadow-inner border border-amber-200/50 group-hover:scale-110 transition-transform"><Ticket size={26}/></div>
-                                                <span className="text-4xl font-black text-slate-800 tracking-tighter">{tickets.length}</span>
+                                    {/* 5 Integrated Action & Status Cards */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                                        {/* Card 1: Kuota Ricoh */}
+                                        <div 
+                                            onClick={() => setActiveTab('ricoh')}
+                                            className="bg-white p-5 rounded-2xl border border-purple-200 shadow-sm hover:shadow-md hover:border-purple-300 hover:-translate-y-1 transition-all cursor-pointer group relative overflow-hidden"
+                                        >
+                                            <div className="absolute top-0 right-0 w-24 h-24 bg-purple-50 rounded-bl-full -z-10 group-hover:scale-110 transition-transform" />
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center font-bold">
+                                                    <Printer size={22} />
+                                                </div>
+                                                <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                                    Top-Up
+                                                </span>
                                             </div>
-                                            <h3 className="font-black text-slate-900 text-lg uppercase tracking-tight">Active Tickets</h3>
-                                            <p className="text-xs text-slate-500 font-bold mt-1 uppercase tracking-wider">Track support requests</p>
+                                            <h3 className="font-black text-slate-900 text-base">Kuota Ricoh</h3>
+                                            <div className="mt-2 space-y-1 text-xs">
+                                                <div className="flex justify-between text-slate-600 font-semibold">
+                                                    <span>Sisa B/W:</span>
+                                                    <span className="font-bold text-slate-900">
+                                                        {activeQuotaAsset?.ricoh_quota_id ? Math.max(0, (activeQuotaAsset.monthly_quota_bw || 0) - (activeQuotaAsset.current_usage_bw || 0)) : '-'} lbr
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between text-slate-600 font-semibold">
+                                                    <span>Sisa Copy B/W / Color:</span>
+                                                    <span className="font-bold text-slate-900">
+                                                        {activeQuotaAsset?.ricoh_quota_id
+                                                            ? `${Math.max(0, (activeQuotaAsset.monthly_quota_copier_bw ?? activeQuotaAsset.monthly_quota_copier ?? 0) - (activeQuotaAsset.current_usage_copier_bw || 0))} / ${Math.max(0, (activeQuotaAsset.monthly_quota_copier_color ?? 0) - (activeQuotaAsset.current_usage_copier_color || 0))}`
+                                                            : '-'} lbr
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="mt-3 text-[11px] font-bold text-purple-600 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                                                Ajukan Tambahan <ArrowRight size={12} />
+                                            </div>
                                         </div>
-                                        <div className="bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-white/50 shadow-lg shadow-blue-500/5 group hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
-                                            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-                                            <div className="flex justify-between items-start mb-4">
-                                                <div className="w-14 h-14 bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-600 rounded-2xl flex items-center justify-center shadow-inner border border-blue-200/50 group-hover:scale-110 transition-transform"><Monitor size={26}/></div>
-                                                <span className="text-4xl font-black text-slate-800 tracking-tighter">{assets.length}</span>
+
+                                        {/* Card 2: Pengajuan Budget & Fasilitas ICT */}
+                                        <div 
+                                            onClick={() => setActiveTab('budget')}
+                                            className="bg-white p-5 rounded-2xl border border-rose-200 shadow-sm hover:shadow-md hover:border-rose-300 hover:-translate-y-1 transition-all cursor-pointer group relative overflow-hidden"
+                                        >
+                                            <div className="absolute top-0 right-0 w-24 h-24 bg-rose-50 rounded-bl-full -z-10 group-hover:scale-110 transition-transform" />
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center font-bold">
+                                                    <FileSpreadsheet size={22} />
+                                                </div>
+                                                <span className="text-[10px] font-black text-rose-700 bg-rose-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                                    Budget ICT
+                                                </span>
                                             </div>
-                                            <h3 className="font-black text-slate-900 text-lg uppercase tracking-tight">My Assets</h3>
-                                            <p className="text-xs text-slate-500 font-bold mt-1 uppercase tracking-wider">Hardware assigned to you</p>
+                                            <h3 className="font-black text-slate-900 text-base">Fasilitas & Budget</h3>
+                                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                                                Usulan pengadaan PC baru, upgrade RAM/SSD, lisensi software, atau komponen.
+                                            </p>
+                                            <div className="mt-3 text-[11px] font-bold text-rose-600 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                                                Buka Formulir <ArrowRight size={12} />
+                                            </div>
                                         </div>
-                                        <div className="bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-white/50 shadow-lg shadow-emerald-500/5 group hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
-                                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-                                            <div className="flex justify-between items-start mb-4">
-                                                <div className="w-14 h-14 bg-gradient-to-br from-emerald-100 to-teal-100 text-emerald-600 rounded-2xl flex items-center justify-center shadow-inner border border-emerald-200/50 group-hover:scale-110 transition-transform"><CheckSquare size={26}/></div>
-                                                <span className="text-4xl font-black text-slate-800 tracking-tighter">{approvals.length}</span>
+
+                                        {/* Card 3: Perangkat Saya */}
+                                        <div 
+                                            onClick={() => setActiveTab('assets')}
+                                            className="bg-white p-5 rounded-2xl border border-blue-200 shadow-sm hover:shadow-md hover:border-blue-300 hover:-translate-y-1 transition-all cursor-pointer group relative overflow-hidden"
+                                        >
+                                            <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-full -z-10 group-hover:scale-110 transition-transform" />
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                                                    <Monitor size={22} />
+                                                </div>
+                                                <span className="text-xl font-black text-slate-800">{assets.length}</span>
                                             </div>
-                                            <h3 className="font-black text-slate-900 text-lg uppercase tracking-tight">Pending Approvals</h3>
-                                            <p className="text-xs text-slate-500 font-bold mt-1 uppercase tracking-wider">Awaiting your sign</p>
+                                            <h3 className="font-black text-slate-900 text-base">Perangkat Saya</h3>
+                                            <p className="text-xs text-slate-500 mt-1 truncate">
+                                                {activeQuotaAsset?.name || 'Aset kantor terdaftar'}
+                                            </p>
+                                            <div className="mt-3 text-[11px] font-bold text-blue-600 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                                                Lihat Detail <ArrowRight size={12} />
+                                            </div>
+                                        </div>
+
+                                        {/* Card 4: Tiket Kendala */}
+                                        <div 
+                                            onClick={() => setActiveTab('status')}
+                                            className="bg-white p-5 rounded-2xl border border-amber-200 shadow-sm hover:shadow-md hover:border-amber-300 hover:-translate-y-1 transition-all cursor-pointer group relative overflow-hidden"
+                                        >
+                                            <div className="absolute top-0 right-0 w-24 h-24 bg-amber-50 rounded-bl-full -z-10 group-hover:scale-110 transition-transform" />
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center font-bold">
+                                                    <Ticket size={22} />
+                                                </div>
+                                                <span className="text-xl font-black text-slate-800">{tickets.length}</span>
+                                            </div>
+                                            <h3 className="font-black text-slate-900 text-base">Tiket Kendala</h3>
+                                            <p className="text-xs text-slate-500 mt-1">Lacak tiket & permohonan</p>
+                                            <div className="mt-3 text-[11px] font-bold text-amber-600 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                                                Lihat Tiket <ArrowRight size={12} />
+                                            </div>
+                                        </div>
+
+                                        {/* Card 5: Persetujuan Checksheet */}
+                                        <div 
+                                            onClick={() => setActiveTab('approvals')}
+                                            className="bg-white p-5 rounded-2xl border border-emerald-200 shadow-sm hover:shadow-md hover:border-emerald-300 hover:-translate-y-1 transition-all cursor-pointer group relative overflow-hidden"
+                                        >
+                                            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50 rounded-bl-full -z-10 group-hover:scale-110 transition-transform" />
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
+                                                    <CheckSquare size={22} />
+                                                </div>
+                                                <span className="text-xl font-black text-slate-800">{approvals.length}</span>
+                                            </div>
+                                            <h3 className="font-black text-slate-900 text-base">Persetujuan</h3>
+                                            <p className="text-xs text-slate-500 mt-1">Checksheet maintenance</p>
+                                            <div className="mt-3 text-[11px] font-bold text-emerald-600 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                                                Tinjau <ArrowRight size={12} />
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -782,6 +1059,470 @@ export default function SupportCenter() {
                                             ))
                                         )}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* RICOH QUOTA REQUEST TAB */}
+                            {activeTab === 'ricoh' && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl mx-auto">
+                                    {/* Banner */}
+                                    <div className="relative overflow-hidden bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 p-6 sm:p-8 rounded-3xl shadow-xl border border-white/10 text-white">
+                                        <div className="flex flex-col sm:flex-row items-center gap-5">
+                                            <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center text-purple-300 border border-white/20 shrink-0 shadow-lg">
+                                                <Printer size={32} />
+                                            </div>
+                                            <div className="text-center sm:text-left">
+                                                <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/30 text-[11px] font-black text-purple-200 uppercase tracking-widest mb-1.5">
+                                                    <Sparkles size={12} /> Auto-Integrated • Tanpa Ketik Ulang
+                                                </div>
+                                                <h2 className="text-2xl sm:text-3xl font-black tracking-tight">Formulir Pengajuan Kuota Ricoh</h2>
+                                                <p className="text-purple-100/70 text-xs sm:text-sm mt-1">
+                                                    Profil pemohon & perangkat kantor Anda terisi otomatis. Masukkan PIN Ricoh Anda untuk verifikasi dan ajukan kuota tambahan.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Section 1: Profil Pemohon Terintegrasi */}
+                                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                            <div className="flex items-center gap-2">
+                                                <User size={18} className="text-purple-600" />
+                                                <h3 className="font-black text-slate-800 text-sm uppercase tracking-wider">I. Data Pemohon & Perangkat Kerja</h3>
+                                            </div>
+                                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
+                                                <CheckCircle2 size={12} /> Terverifikasi dari Akun
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Nama Lengkap</label>
+                                                <p className="font-bold text-slate-800 text-sm mt-0.5 truncate">{user?.name || user?.full_name}</p>
+                                            </div>
+                                            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Departemen</label>
+                                                <p className="font-bold text-slate-800 text-sm mt-0.5">{user?.department || '-'}</p>
+                                            </div>
+                                            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">NIK / ID Karyawan</label>
+                                                <p className="font-bold text-slate-800 text-sm mt-0.5">{user?.nik || user?.employee_id || '-'}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Device Selector */}
+                                        <div className="space-y-2 pt-2">
+                                            <label className="text-xs font-bold text-slate-700 block">Pilih Perangkat Komputer / Laptop:</label>
+                                            {assets.length > 0 && !useCustomDevice ? (
+                                                <div className="space-y-2">
+                                                    <select 
+                                                        value={selectedQuotaAssetId}
+                                                        onChange={(e) => handleSelectQuotaAsset(e.target.value)}
+                                                        className="w-full h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none text-sm font-bold text-slate-800"
+                                                    >
+                                                        {assets.map(a => (
+                                                            <option key={a.id} value={a.id}>
+                                                                💻 {a.name} ({a.category || 'PC'}) — {a.ricoh_quota_id ? `Sisa B/W: ${Math.max(0, (a.monthly_quota_bw || 0) - (a.current_usage_bw || 0))} lbr` : 'Belum ada kuota'}
+                                                            </option>
+                                                        ))}
+                                                        <option value="__OTHER__">➕ Masukkan / Cari Perangkat Lain...</option>
+                                                    </select>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    <div className="relative">
+                                                        <input 
+                                                            type="text"
+                                                            placeholder="Ketik nama komputer (contoh: DESKTOP-B0QJ9O3 atau TCF-PUR01)..."
+                                                            value={customDeviceName}
+                                                            onChange={(e) => {
+                                                                setCustomDeviceName(e.target.value);
+                                                                setShowDeviceDropdown(true);
+                                                            }}
+                                                            onFocus={() => setShowDeviceDropdown(true)}
+                                                            className="w-full h-12 px-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none text-sm font-bold text-slate-800"
+                                                        />
+                                                        {showDeviceDropdown && allPublicDevices.length > 0 && customDeviceName && (
+                                                            <div className="absolute top-full left-0 w-full mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl z-20 max-h-48 overflow-y-auto">
+                                                                {allPublicDevices
+                                                                    .filter(d => (d.computer_name || '').toLowerCase().includes(customDeviceName.toLowerCase()))
+                                                                    .slice(0, 8)
+                                                                    .map((d, i) => (
+                                                                        <div 
+                                                                            key={i}
+                                                                            onClick={() => {
+                                                                                setCustomDeviceName(d.computer_name);
+                                                                                setShowDeviceDropdown(false);
+                                                                                fetchMyQuotaRequests(user, d.computer_name);
+                                                                            }}
+                                                                            className="px-4 py-2.5 hover:bg-purple-50 cursor-pointer text-xs font-semibold text-slate-700 flex justify-between"
+                                                                        >
+                                                                            <span>💻 {d.computer_name}</span>
+                                                                            <span className="text-slate-400">{d.department_name || ''}</span>
+                                                                        </div>
+                                                                    ))
+                                                                }
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {assets.length > 0 && (
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => handleSelectQuotaAsset(assets[0].id)}
+                                                            className="text-xs font-bold text-purple-600 hover:text-purple-800"
+                                                        >
+                                                            ← Kembali ke perangkat saya ({assets[0].name})
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Section 2: Kartu Status Kuota Realtime Perangkat */}
+                                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                            <div className="flex items-center gap-2">
+                                                <Activity size={18} className="text-purple-600" />
+                                                <h3 className="font-black text-slate-800 text-sm uppercase tracking-wider">
+                                                    II. Status Kuota Realtime: <span className="text-purple-700">{useCustomDevice ? (customDeviceName || 'Perangkat Custom') : (activeQuotaAsset?.name || 'Perangkat')}</span>
+                                                </h3>
+                                            </div>
+                                            <span className="text-xs font-bold text-slate-400">Reset tiap tgl 21</span>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            {/* Print B/W */}
+                                            {(() => {
+                                                const qBw = Number(activeQuotaAsset?.monthly_quota_bw) || 0;
+                                                const uBw = Number(activeQuotaAsset?.current_usage_bw) || 0;
+                                                const remBw = Math.max(0, qBw - uBw);
+                                                const pctBw = qBw > 0 ? Math.min(100, (uBw / qBw) * 100) : 0;
+                                                return (
+                                                    <div className="p-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100/50">
+                                                        <div className="flex justify-between items-center mb-1">
+                                                            <span className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                                                                📄 Print B/W
+                                                            </span>
+                                                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${remBw <= 10 ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-700'}`}>
+                                                                {remBw <= 10 ? 'Menipis' : 'Aktif'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-2xl font-black text-slate-900 mt-1">
+                                                            {remBw} <span className="text-xs font-bold text-slate-400 font-normal">lembar sisa</span>
+                                                        </div>
+                                                        <p className="text-[11px] text-slate-500 mt-0.5">Pemakaian: {uBw} / {qBw} lbr</p>
+                                                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden mt-3">
+                                                            <div className={`h-full ${pctBw >= 90 ? 'bg-rose-500' : pctBw >= 70 ? 'bg-amber-500' : 'bg-slate-700'}`} style={{ width: `${pctBw}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+
+                                            {/* Print Color */}
+                                            {(() => {
+                                                const qCol = Number(activeQuotaAsset?.monthly_quota_color) || 0;
+                                                const uCol = Number(activeQuotaAsset?.current_usage_color) || 0;
+                                                const remCol = Math.max(0, qCol - uCol);
+                                                const pctCol = qCol > 0 ? Math.min(100, (uCol / qCol) * 100) : 0;
+                                                return (
+                                                    <div className="p-4 rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/50 to-indigo-50/30">
+                                                        <div className="flex justify-between items-center mb-1">
+                                                            <span className="text-xs font-black text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
+                                                                🎨 Print Warna
+                                                            </span>
+                                                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${remCol <= 5 ? 'bg-rose-100 text-rose-700' : 'bg-purple-100 text-purple-700'}`}>
+                                                                {remCol <= 5 ? 'Menipis' : 'Aktif'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-2xl font-black text-slate-900 mt-1">
+                                                            {remCol} <span className="text-xs font-bold text-slate-400 font-normal">lembar sisa</span>
+                                                        </div>
+                                                        <p className="text-[11px] text-slate-500 mt-0.5">Pemakaian: {uCol} / {qCol} lbr</p>
+                                                        <div className="w-full bg-purple-100 h-2 rounded-full overflow-hidden mt-3">
+                                                            <div className={`h-full ${pctCol >= 90 ? 'bg-rose-500' : 'bg-purple-600'}`} style={{ width: `${pctCol}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+
+                                            {/* Copy B/W */}
+                                            {(() => {
+                                                const fb = Number(activeQuotaAsset?.monthly_quota_copier) || 0;
+                                                const qCopBw = activeQuotaAsset?.monthly_quota_copier_bw != null ? Number(activeQuotaAsset.monthly_quota_copier_bw) : Math.round(fb * 0.8);
+                                                const uCopBw = Number(activeQuotaAsset?.current_usage_copier_bw) || 0;
+                                                const remCopBw = Math.max(0, qCopBw - uCopBw);
+                                                const pctCopBw = qCopBw > 0 ? Math.min(100, (uCopBw / qCopBw) * 100) : 0;
+                                                return (
+                                                    <div className="p-4 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50/50 to-indigo-50/30">
+                                                        <div className="flex justify-between items-center mb-1">
+                                                            <span className="text-xs font-black text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                                                                📑 Copy B/W
+                                                            </span>
+                                                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${remCopBw <= 5 ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                                {remCopBw <= 5 ? 'Menipis' : 'Aktif'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-2xl font-black text-slate-900 mt-1">
+                                                            {remCopBw} <span className="text-xs font-bold text-slate-400 font-normal">lembar sisa</span>
+                                                        </div>
+                                                        <p className="text-[11px] text-slate-500 mt-0.5">Pemakaian: {uCopBw} / {qCopBw} lbr</p>
+                                                        <div className="w-full bg-blue-100 h-2 rounded-full overflow-hidden mt-3">
+                                                            <div className={`h-full ${pctCopBw >= 90 ? 'bg-rose-500' : 'bg-blue-600'}`} style={{ width: `${pctCopBw}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+
+                                            {/* Copy Color */}
+                                            {(() => {
+                                                const fb = Number(activeQuotaAsset?.monthly_quota_copier) || 0;
+                                                const bwDef = activeQuotaAsset?.monthly_quota_copier_bw != null ? Number(activeQuotaAsset.monthly_quota_copier_bw) : Math.round(fb * 0.8);
+                                                const qCopCol = activeQuotaAsset?.monthly_quota_copier_color != null ? Number(activeQuotaAsset.monthly_quota_copier_color) : Math.max(0, fb - bwDef);
+                                                const uCopCol = Number(activeQuotaAsset?.current_usage_copier_color) || 0;
+                                                const remCopCol = Math.max(0, qCopCol - uCopCol);
+                                                const pctCopCol = qCopCol > 0 ? Math.min(100, (uCopCol / qCopCol) * 100) : 0;
+                                                return (
+                                                    <div className="p-4 rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50/50 to-teal-50/30">
+                                                        <div className="flex justify-between items-center mb-1">
+                                                            <span className="text-xs font-black text-cyan-900 uppercase tracking-wider flex items-center gap-1.5">
+                                                                🌈 Copy Color
+                                                            </span>
+                                                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${remCopCol <= 5 ? 'bg-rose-100 text-rose-700' : 'bg-cyan-100 text-cyan-700'}`}>
+                                                                {remCopCol <= 5 ? 'Menipis' : 'Aktif'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-2xl font-black text-slate-900 mt-1">
+                                                            {remCopCol} <span className="text-xs font-bold text-slate-400 font-normal">lembar sisa</span>
+                                                        </div>
+                                                        <p className="text-[11px] text-slate-500 mt-0.5">Pemakaian: {uCopCol} / {qCopCol} lbr</p>
+                                                        <div className="w-full bg-cyan-100 h-2 rounded-full overflow-hidden mt-3">
+                                                            <div className={`h-full ${pctCopCol >= 90 ? 'bg-rose-500' : 'bg-cyan-600'}`} style={{ width: `${pctCopCol}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    </div>
+
+                                    {/* Section 3: Form Pengajuan Tambahan */}
+                                    <form onSubmit={handleSubmitQuota} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-5">
+                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                            <div className="flex items-center gap-2">
+                                                <KeyRound size={18} className="text-purple-600" />
+                                                <h3 className="font-black text-slate-800 text-sm uppercase tracking-wider">III. Otorisasi PIN & Pilihan Tambahan Kuota</h3>
+                                            </div>
+                                        </div>
+
+                                        {/* PIN Ricoh */}
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                                                <span>PIN Ricoh (User Code 4-Digit) *</span>
+                                                <span className="text-[11px] font-normal text-slate-400">Verifikasi hak akses perangkat</span>
+                                            </label>
+                                            <div className="relative">
+                                                <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input 
+                                                    type="password"
+                                                    required
+                                                    maxLength={8}
+                                                    value={ricohPin}
+                                                    onChange={(e) => setRicohPin(e.target.value)}
+                                                    placeholder="Contoh: 3035 atau 8352"
+                                                    className="w-full h-12 pl-10 pr-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none text-sm font-bold tracking-widest text-slate-800"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Quota Preset Buttons */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold text-slate-700 block">Pilih Jumlah Tambahan Kuota:</label>
+                                            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+                                                {[
+                                                    { label: '+25 B/W', sub: 'Print B/W', type: 'BW', bw: 25, col: 0, copBw: 0, copCol: 0 },
+                                                    { label: '+50 B/W', sub: 'Rekomendasi', type: 'BW', bw: 50, col: 0, copBw: 0, copCol: 0 },
+                                                    { label: '+100 B/W', sub: 'Beban Berat', type: 'BW', bw: 100, col: 0, copBw: 0, copCol: 0 },
+                                                    { label: '+50 Copy B/W', sub: 'Fotokopi B/W', type: 'COPIER_BW', bw: 0, col: 0, copBw: 50, copCol: 0 },
+                                                    { label: '+25 Copy Color', sub: 'Fotokopi Warna', type: 'COPIER_COLOR', bw: 0, col: 0, copBw: 0, copCol: 25 },
+                                                    { label: '⚙️ Custom', sub: 'Atur Bebas', type: 'CUSTOM', bw: amountBw, col: amountColor, copBw: amountCopierBw, copCol: amountCopierColor }
+                                                ].map((p, idx) => {
+                                                    const isSelected = quotaType === p.type && (p.type !== 'BW' || amountBw === p.bw);
+                                                    return (
+                                                        <button
+                                                            key={idx}
+                                                            type="button"
+                                                            onClick={() => handlePresetQuota(p.type, p.bw, p.col, p.copBw, p.copCol)}
+                                                            className={`p-3 rounded-2xl border text-center transition-all cursor-pointer ${isSelected ? 'border-purple-600 bg-purple-50 text-purple-900 shadow-sm ring-2 ring-purple-500/20 font-black' : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700 font-semibold'}`}
+                                                        >
+                                                            <div className="text-xs sm:text-sm">{p.label}</div>
+                                                            <div className="text-[10px] text-slate-400 mt-0.5">{p.sub}</div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            {/* Custom inputs if CUSTOM selected */}
+                                            {quotaType === 'CUSTOM' && (
+                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-purple-50/50 rounded-2xl border border-purple-100 mt-3">
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Print B/W (lbr)</label>
+                                                        <input 
+                                                            type="number" 
+                                                            min="0" 
+                                                            value={amountBw} 
+                                                            onChange={(e) => setAmountBw(Math.max(0, parseInt(e.target.value) || 0))} 
+                                                            className="w-full h-10 px-3 bg-white border border-purple-200 rounded-xl font-bold text-sm"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Print Color (lbr)</label>
+                                                        <input 
+                                                            type="number" 
+                                                            min="0" 
+                                                            value={amountColor} 
+                                                            onChange={(e) => setAmountColor(Math.max(0, parseInt(e.target.value) || 0))} 
+                                                            className="w-full h-10 px-3 bg-white border border-purple-200 rounded-xl font-bold text-sm"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Copy B/W (lbr)</label>
+                                                        <input 
+                                                            type="number" 
+                                                            min="0" 
+                                                            value={amountCopierBw} 
+                                                            onChange={(e) => setAmountCopierBw(Math.max(0, parseInt(e.target.value) || 0))} 
+                                                            className="w-full h-10 px-3 bg-white border border-purple-200 rounded-xl font-bold text-sm"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 block mb-1">Copy Color (lbr)</label>
+                                                        <input 
+                                                            type="number" 
+                                                            min="0" 
+                                                            value={amountCopierColor} 
+                                                            onChange={(e) => setAmountCopierColor(Math.max(0, parseInt(e.target.value) || 0))} 
+                                                            className="w-full h-10 px-3 bg-white border border-purple-200 rounded-xl font-bold text-sm"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Reason & Phone */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <div className="space-y-1.5 sm:col-span-2">
+                                                <label className="text-xs font-bold text-slate-700 block">Alasan Pengajuan Tambahan Kuota *</label>
+                                                <textarea 
+                                                    required
+                                                    rows={2}
+                                                    value={quotaReason}
+                                                    onChange={(e) => setQuotaReason(e.target.value)}
+                                                    placeholder="Contoh: Kebutuhan cetak laporan audit internal, SOP produksi, dan dokumen purchasing bulan ini..."
+                                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none text-sm text-slate-800"
+                                                />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-bold text-slate-700 block">Nomor WhatsApp Pemohon (Opsional)</label>
+                                                <input 
+                                                    type="text"
+                                                    value={quotaPhone}
+                                                    onChange={(e) => setQuotaPhone(e.target.value)}
+                                                    placeholder="08xxxxxxxxxx"
+                                                    className="w-full h-11 px-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Messages */}
+                                        {quotaErrorMsg && (
+                                            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs font-bold text-rose-700 flex items-center gap-2">
+                                                <AlertTriangle size={16} /> {quotaErrorMsg}
+                                            </div>
+                                        )}
+                                        {quotaSuccessMsg && (
+                                            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-bold text-emerald-800 flex items-center gap-2">
+                                                <CheckCircle2 size={16} /> {quotaSuccessMsg}
+                                            </div>
+                                        )}
+
+                                        {/* Submit Button */}
+                                        <div className="pt-2">
+                                            <button
+                                                type="submit"
+                                                disabled={submittingQuota}
+                                                className="w-full h-12 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20 transition-all disabled:opacity-50 cursor-pointer"
+                                            >
+                                                {submittingQuota ? (
+                                                    <>
+                                                        <RefreshCw size={16} className="animate-spin" />
+                                                        <span>Mengirim Pengajuan ke Helpdesk...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Send size={16} />
+                                                        <span>Kirim Pengajuan Tambahan Kuota</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </form>
+
+                                    {/* Section 4: Riwayat Pengajuan Kuota Saya */}
+                                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                            <div className="flex items-center gap-2">
+                                                <Clock size={18} className="text-purple-600" />
+                                                <h3 className="font-black text-slate-800 text-sm uppercase tracking-wider">IV. Riwayat Pengajuan Kuota Saya</h3>
+                                            </div>
+                                            <span className="text-xs font-bold text-slate-400">{myQuotaRequests.length} pengajuan</span>
+                                        </div>
+
+                                        {myQuotaRequests.length === 0 ? (
+                                            <div className="text-center py-8 text-slate-400 text-xs font-semibold">
+                                                Belum ada riwayat pengajuan penambahan kuota.
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2.5">
+                                                {myQuotaRequests.map((req) => {
+                                                    const isPending = req.status === 'PENDING';
+                                                    const isApproved = req.status === 'APPROVED';
+                                                    return (
+                                                        <div 
+                                                            key={req.id}
+                                                            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isApproved ? 'bg-emerald-50/40 border-emerald-200' : isPending ? 'bg-amber-50/40 border-amber-200' : 'bg-rose-50/40 border-rose-200'}`}
+                                                        >
+                                                            <div className="space-y-1">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${isApproved ? 'bg-emerald-100 text-emerald-800' : isPending ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                                        {isApproved ? 'DISETUJUI' : isPending ? 'MENUNGGU ICT' : 'DITOLAK'}
+                                                                    </span>
+                                                                    <span className="text-xs font-bold text-slate-800">💻 {req.computer_name}</span>
+                                                                    <span className="text-[11px] text-slate-400">• {new Date(req.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                                                </div>
+                                                                <p className="text-xs text-slate-600 font-semibold">
+                                                                    Tambahan: {req.amount_bw > 0 ? `+${req.amount_bw} Print B/W ` : ''}{req.amount_color > 0 ? `+${req.amount_color} Print Color ` : ''}{(req.amount_copier_bw > 0 || (!req.amount_copier_bw && !req.amount_copier_color && req.amount_copier > 0)) ? `+${req.amount_copier_bw ?? req.amount_copier} Copy B/W ` : ''}{req.amount_copier_color > 0 ? `+${req.amount_copier_color} Copy Color` : ''}
+                                                                </p>
+                                                                <p className="text-xs text-slate-500 italic">"{req.reason}"</p>
+                                                            </div>
+                                                            {req.admin_notes && (
+                                                                <div className="text-right sm:max-w-xs">
+                                                                    <p className="text-[10px] font-bold text-slate-400 uppercase">Catatan ICT:</p>
+                                                                    <p className="text-xs font-semibold text-slate-700">{req.admin_notes}</p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* BUDGET REQUEST TAB */}
+                            {activeTab === 'budget' && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <PublicBudgetRequest embedded={true} onBack={() => setActiveTab('home')} />
                                 </div>
                             )}
 

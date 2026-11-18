@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileText, Download, ShieldAlert, Ticket, MonitorSmartphone, History, Wrench, ArrowRightLeft, Database, Calendar, Eye, FileOutput, CalendarDays, ClipboardList } from 'lucide-react';
+import { FileText, Download, ShieldAlert, Ticket, MonitorSmartphone, History, Wrench, ArrowRightLeft, RotateCcw, Database, Calendar, Eye, FileOutput, CalendarDays, ClipboardList } from 'lucide-react';
 import { generateCyberLogPdf } from '../../utils/generateCyberLogPdf';
 import { generateHelpdeskReportPdf } from '../../utils/generateHelpdeskReportPdf';
 import { generateAssetListPdf } from '../../utils/generateAssetListPdf';
@@ -8,6 +8,7 @@ import { generatePCPdf } from '../../utils/generatePCPdf';
 import { generateNetworkPdf } from '../../utils/generateNetworkPdf';
 import { generatePrinterPdf } from '../../utils/generatePrinterPdf';
 import { generateHandoverPdf } from '../../utils/generateHandoverPdf';
+import { generateReturnHandoverPdf } from '../../utils/generateReturnHandoverPdf';
 import { generateBackupPdf } from '../../utils/generateBackupPdf';
 import { generateMaintenanceSchedulePdf } from '../../utils/generateMaintenanceSchedulePdf';
 import { generateMaintenanceExecutionPdf } from '../../utils/generateMaintenanceExecutionPdf';
@@ -156,6 +157,8 @@ export default function AutomatedForms() {
             generator([], selectedMonth, selectedYear, action);
         } else if (type === 'handover') {
             generateHandoverPdf('.........................................', { category: 'PC' }, { divisi: '.........................................' }, action);
+        } else if (type === 'return_handover') {
+            generateReturnHandoverPdf('', [], { isBlank: true }, action);
         }
     };
 
@@ -300,6 +303,13 @@ export default function AutomatedForms() {
             icon: <ArrowRightLeft size={20} className="text-slate-500" />,
             actionDownload: () => downloadCustomForm(null, 'download', 'handover'),
             actionPreview: () => downloadCustomForm(null, 'preview', 'handover') // Notice handover currently only does one thing, open blank. It opens in new window inherently so download vs preview is similar, but let's just leave it as is.
+        },
+        {
+            title: "Berita Acara Pengembalian Perangkat ICT",
+            description: "Form BAST pengembalian perangkat ICT dari User ke bagian ICT (2 Kolom TTD).",
+            icon: <RotateCcw size={20} className="text-amber-600" />,
+            actionDownload: () => downloadCustomForm(null, 'download', 'return_handover'),
+            actionPreview: () => downloadCustomForm(null, 'preview', 'return_handover')
         },
         {
             title: "Checksheet Server",

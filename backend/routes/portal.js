@@ -5,10 +5,73 @@ const db = require('../db');
 // GET /api/portal/my-assets/:userId
 router.get('/my-assets/:userId', async (req, res) => {
     try {
+        const user = await db('users').where({ id: req.params.userId }).first();
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
         const assets = await db('assets')
-            .where('user_id', req.params.userId)
-            .select('*')
-            .orderBy('name', 'asc');
+            .leftJoin('ricoh_device_quotas', function() {
+                this.on('ricoh_device_quotas.asset_id', '=', 'assets.id')
+                    .orOn('ricoh_device_quotas.computer_name', '=', 'assets.name');
+            })
+            .where(function() {
+                this.where('assets.user_id', user.id);
+                if (user.hr_employee_id) {
+                    this.orWhere('assets.hr_employee_id', user.hr_employee_id);
+                }
+            })
+            .select(
+                'assets.*',
+                'ricoh_device_quotas.id as ricoh_quota_id',
+                'ricoh_device_quotas.monthly_quota_bw',
+                'ricoh_device_quotas.current_usage_bw',
+                'ricoh_device_quotas.monthly_quota_color',
+                'ricoh_device_quotas.current_usage_color',
+                'ricoh_device_quotas.monthly_quota_copier',
+                'ricoh_device_quotas.monthly_quota_copier_bw',
+                'ricoh_device_quotas.monthly_quota_copier_color',
+                'ricoh_device_quotas.current_usage_copier_bw',
+                'ricoh_device_quotas.current_usage_copier_color',
+                'ricoh_device_quotas.user_code as ricoh_user_code',
+                'ricoh_device_quotas.status as ricoh_status',
+                'ricoh_device_quotas.copier_status as ricoh_copier_status',
+                'ricoh_device_quotas.copier_bw_status as ricoh_copier_bw_status',
+                'ricoh_device_quotas.copier_color_status as ricoh_copier_color_status'
+            )
+            .orderBy('assets.name', 'asc');
+
+        // Fallback: If no assets mapped in assets table, check ricoh_device_quotas directly
+        if (assets.length === 0) {
+            const cleanUserName = (user.name || user.username || '').trim();
+            if (cleanUserName) {
+                const directQuotas = await db('ricoh_device_quotas')
+                    .where('computer_name', 'ilike', `%${cleanUserName}%`)
+                    .select('*');
+                for (const r of directQuotas) {
+                    assets.push({
+                        id: r.asset_id || `ricoh-${r.id}`,
+                        name: r.computer_name,
+                        category: 'Laptop/PC',
+                        type: 'PC',
+                        ricoh_quota_id: r.id,
+                        monthly_quota_bw: r.monthly_quota_bw,
+                        current_usage_bw: r.current_usage_bw,
+                        monthly_quota_color: r.monthly_quota_color,
+                        current_usage_color: r.current_usage_color,
+                        monthly_quota_copier: r.monthly_quota_copier,
+                        monthly_quota_copier_bw: r.monthly_quota_copier_bw,
+                        monthly_quota_copier_color: r.monthly_quota_copier_color,
+                        current_usage_copier_bw: r.current_usage_copier_bw,
+                        current_usage_copier_color: r.current_usage_copier_color,
+                        ricoh_user_code: r.user_code,
+                        ricoh_status: r.status,
+                        ricoh_copier_status: r.copier_status,
+                        ricoh_copier_bw_status: r.copier_bw_status,
+                        ricoh_copier_color_status: r.copier_color_status
+                    });
+                }
+            }
+        }
+
         res.json(assets);
     } catch (err) {
         console.error('Error fetching user assets:', err);
@@ -165,6 +228,19 @@ router.get('/my-approvals/:userId', async (req, res) => {
     } catch (err) {
         console.error('Error fetching approvals:', err);
         res.status(500).json({ error: 'Failed to fetch approvals' });
+    }
+});
+
+// GET /api/portal/public-assets-status - Minimal non-sensitive asset telemetry for Public Dashboard
+router.get('/public-assets-status', async (req, res) => {
+    try {
+        const assets = await db('assets')
+            .select('name', 'agent_status', 'ip_address', 'last_agent_sync')
+            .orderBy('name', 'asc');
+        res.json(assets);
+    } catch (err) {
+        console.error('Error fetching public asset status:', err);
+        res.status(500).json({ error: 'Failed to fetch asset status' });
     }
 });
 

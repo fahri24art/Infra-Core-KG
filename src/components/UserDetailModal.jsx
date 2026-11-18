@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, Monitor, Ticket, Phone, Mail, Building, Activity, ShieldCheck, MapPin, Printer } from 'lucide-react';
+import { X, User, Monitor, Ticket, Phone, Mail, Building, Activity, ShieldCheck, MapPin, Printer, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { generateHandoverPdf } from '../utils/generateHandoverPdf';
+import ReturnBastModal from './ReturnBastModal';
 
 export default function UserDetailModal({ userName, assets, onClose }) {
     const [tickets, setTickets] = useState([]);
@@ -12,6 +13,8 @@ export default function UserDetailModal({ userName, assets, onClose }) {
     const [showBastForm, setShowBastForm] = useState(false);
     const [selectedBastAssets, setSelectedBastAssets] = useState(null);
     const [bastFormData, setBastFormData] = useState({ nik: '', jabatan: '', divisi: '', atasan: '', snCharger: '' });
+    const [showReturnBastForm, setShowReturnBastForm] = useState(false);
+    const [selectedReturnAssets, setSelectedReturnAssets] = useState([]);
 
     useEffect(() => {
         const fetchEmployee = async () => {
@@ -60,11 +63,8 @@ export default function UserDetailModal({ userName, assets, onClose }) {
         return a.contact && a.contact.toLowerCase() === userName.toLowerCase();
     });
 
-    // Filter only desktop and laptop for BAST
-    const bastAssets = assignedAssets.filter(a => {
-        const cat = (a.category || '').toLowerCase();
-        return cat.includes('desktop') || cat.includes('laptop') || cat.includes('pc') || cat.includes('computer');
-    });
+    // Allow BAST (Serah Terima & Pengembalian) for all assigned ICT assets (PC, Laptop, Printer, Phone, etc.)
+    const bastAssets = assignedAssets;
 
     // Extract email from contact if it looks like an email
     const email = userName.includes('@') ? userName : `${userName.replace(/\s+/g, '.').toLowerCase()}@tricentrum.com`;
@@ -80,6 +80,11 @@ export default function UserDetailModal({ userName, assets, onClose }) {
             snCharger: ''
         });
         setShowBastForm(true);
+    };
+
+    const handleReturnClick = (assetsToReturn) => {
+        setSelectedReturnAssets(Array.isArray(assetsToReturn) ? assetsToReturn : [assetsToReturn]);
+        setShowReturnBastForm(true);
     };
 
     return (
@@ -108,6 +113,15 @@ export default function UserDetailModal({ userName, assets, onClose }) {
                                 title="Print BAST Semua Aset"
                             >
                                 <Printer size={16} /> Print BAST
+                            </button>
+                        )}
+                        {assignedAssets.length > 0 && (
+                            <button 
+                                onClick={() => handleReturnClick(assignedAssets)}
+                                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl shadow-sm transition-all text-xs font-black uppercase flex items-center gap-2"
+                                title="Print BAST Pengembalian Semua Aset"
+                            >
+                                <RotateCcw size={16} /> BAST Kembali
                             </button>
                         )}
                         <button onClick={onClose} className="p-3 bg-slate-50 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-2xl transition-all">
@@ -217,6 +231,17 @@ export default function UserDetailModal({ userName, assets, onClose }) {
                                                                 <Printer size={12} /> Print
                                                             </button>
                                                         )}
+                                                        <button 
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                handleReturnClick(asset);
+                                                            }}
+                                                            className={`${bastAssets.some(b => b.id === asset.id) ? '' : 'ml-auto'} px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded shadow-sm transition-all text-[9px] font-black uppercase flex items-center gap-1.5`}
+                                                            title="Print BAST Pengembalian Perangkat Ini"
+                                                        >
+                                                            <RotateCcw size={12} /> Kembali
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </Link>
@@ -318,6 +343,17 @@ export default function UserDetailModal({ userName, assets, onClose }) {
                         </div>
                     </div>
                 )}
+                <ReturnBastModal
+                    isOpen={showReturnBastForm}
+                    onClose={() => setShowReturnBastForm(false)}
+                    userName={userName}
+                    assets={selectedReturnAssets}
+                    initialData={{
+                        nik: employeeData?.nik || '',
+                        jabatan: employeeData?.position || '',
+                        divisi: employeeData?.department || department || 'General',
+                    }}
+                />
             </div>
         </div>
     );

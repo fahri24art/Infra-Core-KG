@@ -10,7 +10,7 @@ function generateToken(user, organization, expiresInDays = 7) {
         username: user.username || user.name,
         name: user.name,
         role: user.role,
-        organization: organization || user.organization || 'TCF-SG',
+        organization: organization || user.organization || (process.env.PLANT_CODE || 'TCF-KG'),
         exp: Date.now() + expiresInDays * 24 * 60 * 60 * 1000
     };
     const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -115,32 +115,50 @@ function isPublicRoute(req) {
         if (method === 'POST' || method === 'GET') return true;
     }
 
+    // 8. Uptime Kuma Automated Webhook Alerts
+    if (cleanUrl.startsWith('/api/uptime-kuma') || cleanUrl.startsWith('/api/network/uptime-kuma')) return true;
+
+    // 9. Public Ricoh Quota Request Form & Device Verification
+    if (cleanUrl.startsWith('/api/ricoh/request-') || cleanUrl.startsWith('/api/network/ricoh/request-')) return true;
+    if (cleanUrl === '/api/ricoh/public-devices' || cleanUrl === '/api/network/ricoh/public-devices') return true;
+    if (cleanUrl === '/api/ricoh/my-requests' || cleanUrl === '/api/network/ricoh/my-requests') return true;
+
+    // 10. Public Read-Only Portal & Live Dashboards (No Login Required)
+    if (method === 'GET') {
+        if (cleanUrl === '/api/portal/public-assets-status' || cleanUrl === '/api/network/portal/public-assets-status') return true;
+        if (cleanUrl === '/api/ricoh/devices/status' || cleanUrl === '/api/ricoh/departments' || cleanUrl === '/api/ricoh/logs' || cleanUrl === '/api/ricoh/devices/quotas' || cleanUrl === '/api/ricoh/executive-summary' || cleanUrl === '/api/ricoh/monthly-stats' || cleanUrl === '/api/ricoh/monthly-logs' || cleanUrl === '/api/ricoh/custom-range-logs' || cleanUrl === '/api/ricoh/management-report-data' || cleanUrl === '/api/ricoh/jobs') return true;
+        if (cleanUrl === '/api/network/dashboard' || cleanUrl === '/api/network/isp-bandwidth-monthly' || cleanUrl === '/api/network/uptime-monthly' || cleanUrl === '/api/network/maintenance/monthly-kpi') return true;
+        if (cleanUrl === '/api/network/tickets/analytics/dashboard' || cleanUrl === '/api/tickets/analytics/dashboard') return true;
+        if (cleanUrl === '/api/network/tickets/resolution-kpi' || cleanUrl === '/api/tickets/resolution-kpi') return true;
+        if (cleanUrl === '/api/hr/rooms' || cleanUrl === '/api/hr/rooms/bookings' || cleanUrl === '/api/hr/dashboard/summary') return true;
+        if (cleanUrl === '/api/hse/dashboard/summary' || cleanUrl === '/api/hse/statistics') return true;
+        if (cleanUrl === '/api/hr/apars/dashboard' || cleanUrl.startsWith('/api/hr/apars/public/') || cleanUrl.startsWith('/api/hr/hydrants/public/')) return true;
+    }
+
     return false;
 }
 
 // Main Express auth middleware
 function authMiddleware(req, res, next) {
+    const token = extractToken(req);
+    if (token) {
+        const user = verifyToken(token);
+        if (user) req.user = user;
+    }
+
     if (isPublicRoute(req)) {
         return next();
     }
 
-    const token = extractToken(req);
-    if (!token) {
-        return res.status(401).json({
-            error: 'UNAUTHORIZED',
-            message: 'Akses API ditolak: Anda harus login terlebih dahulu untuk mengakses endpoint ini.'
+    if (!token || !req.user) {
+        return res.status(!token ? 401 : 401).json({
+            error: !token ? 'UNAUTHORIZED' : 'INVALID_TOKEN',
+            message: !token
+                ? 'Akses API ditolak: Anda harus login terlebih dahulu untuk mengakses endpoint ini.'
+                : 'Sesi login telah kedaluwarsa atau tidak valid. Silakan login kembali.'
         });
     }
 
-    const user = verifyToken(token);
-    if (!user) {
-        return res.status(401).json({
-            error: 'INVALID_TOKEN',
-            message: 'Sesi login telah kedaluwarsa atau tidak valid. Silakan login kembali.'
-        });
-    }
-
-    req.user = user;
     next();
 }
 

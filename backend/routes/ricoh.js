@@ -19,10 +19,11 @@ const { pollDevice } = require('../services/ricoh_snmp');
 const xlsx = require('xlsx');
 const { getCurrentBillingCycle, getPreviousBillingCycle, performBillingCycleReset } = require('../services/ricoh_billing_cycle');
 const { generateUniquePin } = require('../services/asset_sync');
+const configService = require('../services/configService');
 // Auto Excel generation function for Ricoh Address Book
 
 
-const generateExcelFile = async (org = 'TCF-SG') => {
+const generateExcelFile = async (org = (process.env.PLANT_CODE || 'TCF-KG')) => {
   try {
     const orgDb = db.getDb ? db.getDb(org) : db;
     const rows = await orgDb('ricoh_device_quotas')
@@ -56,7 +57,9 @@ const generateExcelFile = async (org = 'TCF-SG') => {
 
       'B/W Quota': row.monthly_quota_bw || 0,
       'Color Quota': row.monthly_quota_color || 0,
-      'Copy Quota': row.monthly_quota_copier || 0,
+      'Copy B/W Quota': row.monthly_quota_copier_bw ?? (row.monthly_quota_copier || 0),
+      'Copy Color Quota': row.monthly_quota_copier_color ?? 0,
+      'Copy Total Quota': row.monthly_quota_copier || 0,
       'Print B/W Usage': Number(row.current_usage_bw) || 0,
       'Print Color Usage': Number(row.current_usage_color) || 0,
       'Copy B/W Usage': Number(row.current_usage_copier_bw) || 0,
@@ -203,7 +206,8 @@ const syncInventoryToDeviceQuotas = async () => {
 
     const validAssets = assets.filter(a => {
       if (!a.name || !a.name.trim()) return false;
-      if (/^[A-Za-z0-9]+-[A-Za-z0-9]+-[0-9A-Fa-f]{4}$/i.test(a.name.trim())) return false;
+      // Exclude blank phantom records that have no IP/specs
+      if (a.name.trim().toLowerCase() === 'unknown device' && !a.ip_address) return false;
       return true;
     });
 
@@ -266,7 +270,9 @@ const syncInventoryToDeviceQuotas = async () => {
           pin = await generateUniquePin(db);
         }
 
-        if (!existingQuota) {
+        const isUnassignedRepair = String(asset.status || '').toLowerCase().includes('repair') && !asset.user_id && !asset.hr_employee_id;
+
+        if (!existingQuota && !isUnassignedRepair) {
           await db('ricoh_device_quotas').insert({
             computer_name: asset.name,
             ip_address: asset.ip_address || '',
@@ -283,7 +289,11 @@ const syncInventoryToDeviceQuotas = async () => {
             lifetime_copier_bw: 0,
             lifetime_copier_color: 0,
             monthly_quota_copier: 200,
+            monthly_quota_copier_bw: 160,
+            monthly_quota_copier_color: 40,
             copier_status: 'active',
+            copier_bw_status: 'active',
+            copier_color_status: 'active',
             user_code: pin,
             status: 'active',
             asset_id: asset.id,
@@ -440,6 +450,15 @@ router.get('/jobs', async (req, res) => {
 
     const rows = await query;
 
+    if (!req.user) {
+      const sanitized = rows.map(r => ({
+        ...r,
+        pin_code: null,
+        user_id: null,
+        user_name: /^\d{3,6}$/.test(String(r.user_name || '').trim()) ? (r.asset_computer_name || '-') : r.user_name
+      }));
+      return res.json(sanitized);
+    }
 
     res.json(rows);
 
@@ -659,16 +678,22 @@ async function syncDepartmentQuotas(deptId = null) {
       .sum('monthly_quota_bw as total_bw')
       .sum('monthly_quota_color as total_color')
       .sum('monthly_quota_copier as total_copier')
+      .sum('monthly_quota_copier_bw as total_copier_bw')
+      .sum('monthly_quota_copier_color as total_copier_color')
       .groupBy('department_id');
 
     for (const agg of aggregated) {
       if (agg.department_id) {
+        const totCpyBw = Number(agg.total_copier_bw) || 0;
+        const totCpyColor = Number(agg.total_copier_color) || 0;
         await db('ricoh_departments')
           .where('id', agg.department_id)
           .update({
             monthly_quota_bw: Number(agg.total_bw) || 0,
             monthly_quota_color: Number(agg.total_color) || 0,
-            monthly_quota_copier: Number(agg.total_copier) || 0
+            monthly_quota_copier_bw: totCpyBw,
+            monthly_quota_copier_color: totCpyColor,
+            monthly_quota_copier: (totCpyBw + totCpyColor) || Number(agg.total_copier) || 0
           });
       }
     }
@@ -695,17 +720,33 @@ router.get('/departments', async (req, res) => {
       const deptDevices = devices.filter(d => Number(d.department_id) === Number(dept.id));
       const uBw = deptDevices.reduce((sum, d) => sum + (Number(d.current_usage_bw) || 0), 0);
       const uColor = deptDevices.reduce((sum, d) => sum + (Number(d.current_usage_color) || 0), 0);
-      const uCopier = deptDevices.reduce((sum, d) => sum + (Number(d.current_usage_copier_bw) || 0) + (Number(d.current_usage_copier_color) || 0), 0);
+      const uCopierBw = deptDevices.reduce((sum, d) => sum + (Number(d.current_usage_copier_bw) || 0), 0);
+      const uCopierColor = deptDevices.reduce((sum, d) => sum + (Number(d.current_usage_copier_color) || 0), 0);
+      const uCopier = uCopierBw + uCopierColor;
       
       // Auto-accumulate quotas from member devices (User / PC Quotas)
       const sumQuotaBw = deptDevices.reduce((sum, d) => sum + (Number(d.monthly_quota_bw) || 0), 0);
       const sumQuotaColor = deptDevices.reduce((sum, d) => sum + (Number(d.monthly_quota_color) || 0), 0);
-      const sumQuotaCopier = deptDevices.reduce((sum, d) => sum + (Number(d.monthly_quota_copier) || 0), 0);
+      const sumQuotaCopierBw = deptDevices.reduce((sum, d) => {
+        const fb = Number(d.monthly_quota_copier) || 200;
+        return sum + (d.monthly_quota_copier_bw != null ? Number(d.monthly_quota_copier_bw) : Math.round(fb * 0.8));
+      }, 0);
+      const sumQuotaCopierColor = deptDevices.reduce((sum, d) => {
+        const fb = Number(d.monthly_quota_copier) || 200;
+        const bw = d.monthly_quota_copier_bw != null ? Number(d.monthly_quota_copier_bw) : Math.round(fb * 0.8);
+        return sum + (d.monthly_quota_copier_color != null ? Number(d.monthly_quota_copier_color) : Math.max(0, fb - bw));
+      }, 0);
+      const sumQuotaCopier = sumQuotaCopierBw + sumQuotaCopierColor;
 
       // If department has devices assigned, the department quota is automatically the accumulated total of member PC quotas!
       const qBw = deptDevices.length > 0 ? sumQuotaBw : (Number(dept.monthly_quota_bw) || 0);
       const qColor = deptDevices.length > 0 ? sumQuotaColor : (Number(dept.monthly_quota_color) || 0);
-      const qCopier = deptDevices.length > 0 ? sumQuotaCopier : (Number(dept.monthly_quota_copier) || 0);
+      const deptFbCopier = Number(dept.monthly_quota_copier) || 0;
+      const deptDefCopierBw = dept.monthly_quota_copier_bw != null ? Number(dept.monthly_quota_copier_bw) : Math.round(deptFbCopier * 0.8);
+      const deptDefCopierColor = dept.monthly_quota_copier_color != null ? Number(dept.monthly_quota_copier_color) : Math.max(0, deptFbCopier - deptDefCopierBw);
+      const qCopierBw = deptDevices.length > 0 ? sumQuotaCopierBw : deptDefCopierBw;
+      const qCopierColor = deptDevices.length > 0 ? sumQuotaCopierColor : deptDefCopierColor;
+      const qCopier = qCopierBw + qCopierColor;
 
       const distinctUsers = new Set();
       deptDevices.forEach(d => {
@@ -718,30 +759,47 @@ router.get('/departments', async (req, res) => {
         monthly_quota_bw: qBw,
         monthly_quota_color: qColor,
         monthly_quota_copier: qCopier,
+        monthly_quota_copier_bw: qCopierBw,
+        monthly_quota_copier_color: qCopierColor,
         manual_quota_bw: Number(dept.monthly_quota_bw) || 0,
         manual_quota_color: Number(dept.monthly_quota_color) || 0,
         manual_quota_copier: Number(dept.monthly_quota_copier) || 0,
+        manual_quota_copier_bw: deptDefCopierBw,
+        manual_quota_copier_color: deptDefCopierColor,
         current_usage_bw: uBw,
         current_usage_color: uColor,
         current_usage_copier: uCopier,
+        current_usage_copier_bw: uCopierBw,
+        current_usage_copier_color: uCopierColor,
         device_count: deptDevices.length,
         user_count: distinctUsers.size,
-        members: deptDevices.map(d => ({
-          id: d.id,
-          computer_name: d.computer_name,
-          ip_address: d.ip_address,
-          user_code: d.user_code,
-          user_name: d.user_name || d.asset_contact || 'Unassigned',
-          whatsapp: d.user_whatsapp || null,
-          status: d.status,
-          copier_status: d.copier_status,
-          current_usage_bw: Number(d.current_usage_bw) || 0,
-          current_usage_color: Number(d.current_usage_color) || 0,
-          current_usage_copier: (Number(d.current_usage_copier_bw) || 0) + (Number(d.current_usage_copier_color) || 0),
-          monthly_quota_bw: Number(d.monthly_quota_bw) || 1000,
-          monthly_quota_color: Number(d.monthly_quota_color) || 500,
-          monthly_quota_copier: Number(d.monthly_quota_copier) || 200
-        }))
+        members: deptDevices.map(d => {
+          const dFb = Number(d.monthly_quota_copier) || 200;
+          const dCpyBw = d.monthly_quota_copier_bw != null ? Number(d.monthly_quota_copier_bw) : Math.round(dFb * 0.8);
+          const dCpyCol = d.monthly_quota_copier_color != null ? Number(d.monthly_quota_copier_color) : Math.max(0, dFb - dCpyBw);
+          return {
+            id: d.id,
+            computer_name: d.computer_name,
+            ip_address: d.ip_address,
+            user_code: d.user_code,
+            user_name: d.user_name || d.asset_contact || 'Unassigned',
+            whatsapp: d.user_whatsapp || null,
+            status: d.status,
+            copier_status: d.copier_status,
+            copier_bw_status: d.copier_bw_status || 'active',
+            copier_color_status: d.copier_color_status || 'active',
+            current_usage_bw: Number(d.current_usage_bw) || 0,
+            current_usage_color: Number(d.current_usage_color) || 0,
+            current_usage_copier_bw: Number(d.current_usage_copier_bw) || 0,
+            current_usage_copier_color: Number(d.current_usage_copier_color) || 0,
+            current_usage_copier: (Number(d.current_usage_copier_bw) || 0) + (Number(d.current_usage_copier_color) || 0),
+            monthly_quota_bw: d.monthly_quota_bw != null ? Number(d.monthly_quota_bw) : 1000,
+            monthly_quota_color: d.monthly_quota_color != null ? Number(d.monthly_quota_color) : 500,
+            monthly_quota_copier_bw: dCpyBw,
+            monthly_quota_copier_color: dCpyCol,
+            monthly_quota_copier: dCpyBw + dCpyCol
+          };
+        })
       };
     });
 
@@ -757,12 +815,16 @@ router.get('/departments', async (req, res) => {
 
 router.post('/departments', async (req, res) => {
   try {
-    const { name, monthly_quota_bw, monthly_quota_color, monthly_quota_copier } = req.body;
+    const { name, monthly_quota_bw, monthly_quota_color, monthly_quota_copier, monthly_quota_copier_bw, monthly_quota_copier_color } = req.body;
+    const cpyBw = monthly_quota_copier_bw !== undefined ? Number(monthly_quota_copier_bw) : Math.round((Number(monthly_quota_copier) || 2000) * 0.8);
+    const cpyColor = monthly_quota_copier_color !== undefined ? Number(monthly_quota_copier_color) : Math.max(0, (Number(monthly_quota_copier) || 2000) - cpyBw);
     const [id] = await db('ricoh_departments').insert({
       name, 
       monthly_quota_bw: monthly_quota_bw || 10000, 
       monthly_quota_color: monthly_quota_color || 5000,
-      monthly_quota_copier: monthly_quota_copier || 2000
+      monthly_quota_copier_bw: cpyBw,
+      monthly_quota_copier_color: cpyColor,
+      monthly_quota_copier: cpyBw + cpyColor
     }).returning('id');
 
 
@@ -786,13 +848,19 @@ router.post('/departments', async (req, res) => {
 
 router.put('/departments/:id/quota', async (req, res) => {
   try {
-    const { monthly_quota_bw, monthly_quota_color, monthly_quota_copier, name } = req.body;
+    const { monthly_quota_bw, monthly_quota_color, monthly_quota_copier, monthly_quota_copier_bw, monthly_quota_copier_color, name } = req.body;
     const updateData = {
       monthly_quota_bw, 
       monthly_quota_color, 
       name
     };
-    if (monthly_quota_copier !== undefined) {
+    if (monthly_quota_copier_bw !== undefined || monthly_quota_copier_color !== undefined) {
+      const cpyBw = Number(monthly_quota_copier_bw) || 0;
+      const cpyCol = Number(monthly_quota_copier_color) || 0;
+      updateData.monthly_quota_copier_bw = cpyBw;
+      updateData.monthly_quota_copier_color = cpyCol;
+      updateData.monthly_quota_copier = cpyBw + cpyCol;
+    } else if (monthly_quota_copier !== undefined) {
       updateData.monthly_quota_copier = monthly_quota_copier;
     }
     const updated = await db('ricoh_departments').where('id', req.params.id).update(updateData);
@@ -988,6 +1056,16 @@ router.get('/logs', async (req, res) => {
       .limit(15000); // safety cap
 
 
+    if (!req.user) {
+      const sanitizedLogs = rows.map(r => ({
+        ...r,
+        message: typeof r.message === 'string'
+          ? r.message.replace(/PIN[:\s]*\d{3,8}/gi, 'PIN ***')
+          : r.message
+      }));
+      return res.json(sanitizedLogs);
+    }
+
     res.json(rows);
 
 
@@ -1068,12 +1146,14 @@ router.put('/users/:id/quota', async (req, res) => {
 
 router.get('/devices/quotas', async (req, res) => {
   try {
+    await ensureSupervisorColumns(db);
     await syncInventoryToDeviceQuotas();
 
     const rows = await db('ricoh_device_quotas')
       .leftJoin('assets', 'assets.id', db.raw('COALESCE(ricoh_device_quotas.asset_id, (SELECT a2.id FROM assets a2 WHERE a2.name = ricoh_device_quotas.computer_name LIMIT 1))'))
       .leftJoin('users', 'assets.user_id', 'users.id')
       .leftJoin('hr_employees as hr', 'assets.hr_employee_id', 'hr.id')
+      .leftJoin('hr_employees as sup_hr', 'ricoh_device_quotas.supervisor_hr_id', 'sup_hr.id')
       .leftJoin('ricoh_departments', 'ricoh_device_quotas.department_id', 'ricoh_departments.id')
       .select(
         'ricoh_device_quotas.*',
@@ -1086,33 +1166,60 @@ router.get('/devices/quotas', async (req, res) => {
         db.raw("COALESCE(hr.phone, users.whatsapp) as user_whatsapp"),
         'users.email as user_email',
         db.raw("COALESCE(hr.department, users.department) as user_department"),
-        db.raw("COALESCE(ricoh_departments.name, hr.department, users.department, assets.location, 'General') as department_name")
+        db.raw("COALESCE(ricoh_departments.name, hr.department, users.department, assets.location, 'General') as department_name"),
+        db.raw("COALESCE(sup_hr.name, ricoh_device_quotas.supervisor_name) as supervisor_name"),
+        'sup_hr.position as supervisor_position',
+        db.raw("COALESCE(sup_hr.phone, ricoh_device_quotas.supervisor_whatsapp) as supervisor_whatsapp")
       )
       .orderBy('ricoh_device_quotas.computer_name', 'asc');
 
     const enriched = rows.map(r => {
-      const qBw = Number(r.monthly_quota_bw) || 1000;
+      const qBw = r.monthly_quota_bw != null ? Number(r.monthly_quota_bw) : 1000;
       const uBw = Number(r.current_usage_bw) || 0;
-      const qColor = Number(r.monthly_quota_color) || 500;
+      const qColor = r.monthly_quota_color != null ? Number(r.monthly_quota_color) : 500;
       const uColor = Number(r.current_usage_color) || 0;
-      const qCopier = Number(r.monthly_quota_copier) || 200;
-      const uCopier = (Number(r.current_usage_copier_bw) || 0) + (Number(r.current_usage_copier_color) || 0);
 
-      const bw_pct = Math.round((uBw / qBw) * 100);
-      const color_pct = Math.round((uColor / qColor) * 100);
-      const copier_pct = Math.round((uCopier / qCopier) * 100);
-      const max_pct = Math.max(bw_pct, color_pct, copier_pct);
+      const fbCopier = r.monthly_quota_copier != null ? Number(r.monthly_quota_copier) : 200;
+      const qCopierBw = r.monthly_quota_copier_bw != null ? Number(r.monthly_quota_copier_bw) : Math.round(fbCopier * 0.8);
+      const qCopierColor = r.monthly_quota_copier_color != null ? Number(r.monthly_quota_copier_color) : Math.max(0, fbCopier - qCopierBw);
+      const uCopierBw = Number(r.current_usage_copier_bw) || 0;
+      const uCopierColor = Number(r.current_usage_copier_color) || 0;
 
-      return {
+      const qCopier = qCopierBw + qCopierColor;
+      const uCopier = uCopierBw + uCopierColor;
+
+      const bw_pct = qBw > 0 ? Math.round((uBw / qBw) * 100) : (uBw > 0 ? 100 : 0);
+      const color_pct = qColor > 0 ? Math.round((uColor / qColor) * 100) : (uColor > 0 ? 100 : 0);
+      const copier_bw_pct = qCopierBw > 0 ? Math.round((uCopierBw / qCopierBw) * 100) : (uCopierBw > 0 ? 100 : 0);
+      const copier_color_pct = qCopierColor > 0 ? Math.round((uCopierColor / qCopierColor) * 100) : (uCopierColor > 0 ? 100 : 0);
+      const copier_pct = qCopier > 0 ? Math.round((uCopier / qCopier) * 100) : (uCopier > 0 ? 100 : 0);
+      const max_pct = Math.max(bw_pct, color_pct, copier_bw_pct, copier_color_pct);
+
+      const rowOut = {
         ...r,
+        monthly_quota_bw: qBw,
+        monthly_quota_color: qColor,
+        monthly_quota_copier_bw: qCopierBw,
+        monthly_quota_copier_color: qCopierColor,
+        monthly_quota_copier: qCopier,
         bw_pct,
         color_pct,
+        copier_bw_pct,
+        copier_color_pct,
         copier_pct,
         max_pct,
         is_warning_80: max_pct >= 80,
         is_warning_90: max_pct >= 90,
         is_critical_99: max_pct >= 99
       };
+
+      if (!req.user) {
+        delete rowOut.user_code;
+        delete rowOut.user_whatsapp;
+        delete rowOut.user_email;
+      }
+
+      return rowOut;
     });
 
     res.json(enriched);
@@ -1131,15 +1238,21 @@ router.post('/devices/quotas', async (req, res) => {
   try {
 
 
-    const { computer_name, ip_address, monthly_quota_bw, monthly_quota_color, monthly_quota_copier, user_code, department_id } = req.body;
+    const { computer_name, ip_address, monthly_quota_bw, monthly_quota_color, monthly_quota_copier, monthly_quota_copier_bw, monthly_quota_copier_color, user_code, department_id } = req.body;
     const pin = user_code || Math.floor(1000 + Math.random() * 9000).toString();
+    const cpyBw = monthly_quota_copier_bw !== undefined ? Number(monthly_quota_copier_bw) : Math.round((Number(monthly_quota_copier) || 200) * 0.8);
+    const cpyColor = monthly_quota_copier_color !== undefined ? Number(monthly_quota_copier_color) : Math.max(0, (Number(monthly_quota_copier) || 200) - cpyBw);
 
     const [id] = await db('ricoh_device_quotas').insert({
       computer_name, ip_address: ip_address || '', 
       monthly_quota_bw: monthly_quota_bw || 1000, 
       monthly_quota_color: monthly_quota_color || 500,
-      monthly_quota_copier: monthly_quota_copier || 200,
+      monthly_quota_copier_bw: cpyBw,
+      monthly_quota_copier_color: cpyColor,
+      monthly_quota_copier: cpyBw + cpyColor,
       copier_status: 'active',
+      copier_bw_status: 'active',
+      copier_color_status: 'active',
       current_usage_bw: 0, current_usage_color: 0,
       current_usage_copier_bw: 0, current_usage_copier_color: 0,
       user_code: pin, department_id: department_id || null
@@ -1155,18 +1268,61 @@ router.post('/devices/quotas', async (req, res) => {
 
 router.put('/devices/quotas/:id/quota', async (req, res) => {
   try {
-    const { monthly_quota_bw, monthly_quota_color, monthly_quota_copier, user_code, department_id } = req.body;
+    await ensureSupervisorColumns(db);
+    const {
+      monthly_quota_bw,
+      monthly_quota_color,
+      monthly_quota_copier,
+      monthly_quota_copier_bw,
+      monthly_quota_copier_color,
+      user_code,
+      department_id,
+      supervisor_hr_id,
+      supervisor_name,
+      supervisor_whatsapp,
+      wa_notify_mode
+    } = req.body;
 
     const targetDevice = await db('ricoh_device_quotas').where('id', req.params.id).first();
     if (!targetDevice) return res.status(404).json({ error: "Device not found" });
+
+    let resolvedSupHrId = supervisor_hr_id !== undefined ? (supervisor_hr_id ? parseInt(supervisor_hr_id, 10) : null) : targetDevice.supervisor_hr_id;
+    let resolvedSupName = supervisor_name !== undefined ? (supervisor_name || null) : targetDevice.supervisor_name;
+    let resolvedSupWa = supervisor_whatsapp !== undefined ? (supervisor_whatsapp || null) : targetDevice.supervisor_whatsapp;
+    if (supervisor_hr_id !== undefined) {
+      if (resolvedSupHrId) {
+        const supEmp = await db('hr_employees').where({ id: resolvedSupHrId }).first();
+        if (supEmp) {
+          resolvedSupName = supEmp.name;
+          resolvedSupWa = supEmp.phone || resolvedSupWa;
+        }
+      } else {
+        resolvedSupName = supervisor_name || null;
+        resolvedSupWa = supervisor_whatsapp || null;
+      }
+    }
+    const resolvedNotifyMode = wa_notify_mode !== undefined ? (wa_notify_mode || 'auto') : (targetDevice.wa_notify_mode || 'auto');
+
+    let resolvedCpyBw = targetDevice.monthly_quota_copier_bw != null ? Number(targetDevice.monthly_quota_copier_bw) : Math.round((Number(targetDevice.monthly_quota_copier) || 200) * 0.8);
+    let resolvedCpyCol = targetDevice.monthly_quota_copier_color != null ? Number(targetDevice.monthly_quota_copier_color) : Math.max(0, (Number(targetDevice.monthly_quota_copier) || 200) - resolvedCpyBw);
+    if (monthly_quota_copier_bw !== undefined || monthly_quota_copier_color !== undefined) {
+      if (monthly_quota_copier_bw !== undefined) resolvedCpyBw = Number(monthly_quota_copier_bw) || 0;
+      if (monthly_quota_copier_color !== undefined) resolvedCpyCol = Number(monthly_quota_copier_color) || 0;
+    } else if (monthly_quota_copier !== undefined) {
+      const totalCpy = Number(monthly_quota_copier) || 0;
+      resolvedCpyBw = Math.round(totalCpy * 0.8);
+      resolvedCpyCol = Math.max(0, totalCpy - resolvedCpyBw);
+    }
+    const resolvedCpyTotal = resolvedCpyBw + resolvedCpyCol;
 
     // Check if the new user_code is different and already belongs to another device
     if (user_code && user_code !== targetDevice.user_code) {
         const otherDevice = await db('ricoh_device_quotas').where('user_code', user_code).first();
         if (otherDevice) {
-            // SWAP their usage data and their PINs
+            // SWAP their PINs, usage (including current_usage total), lifetimes, quotas, and copier lock statuses
             await db('ricoh_device_quotas').where('id', targetDevice.id).update({
                 user_code: otherDevice.user_code,
+                current_usage: otherDevice.current_usage,
                 current_usage_bw: otherDevice.current_usage_bw,
                 current_usage_color: otherDevice.current_usage_color,
                 current_usage_copier_bw: otherDevice.current_usage_copier_bw,
@@ -1175,14 +1331,21 @@ router.put('/devices/quotas/:id/quota', async (req, res) => {
                 lifetime_color: otherDevice.lifetime_color,
                 lifetime_copier_bw: otherDevice.lifetime_copier_bw,
                 lifetime_copier_color: otherDevice.lifetime_copier_color,
-                monthly_quota_bw: monthly_quota_bw,
-                monthly_quota_color: monthly_quota_color,
-                monthly_quota_copier: monthly_quota_copier !== undefined ? monthly_quota_copier : targetDevice.monthly_quota_copier,
-                department_id: department_id || null
+                monthly_quota: otherDevice.monthly_quota,
+                monthly_quota_bw: otherDevice.monthly_quota_bw,
+                monthly_quota_color: otherDevice.monthly_quota_color,
+                monthly_quota_copier_bw: otherDevice.monthly_quota_copier_bw,
+                monthly_quota_copier_color: otherDevice.monthly_quota_copier_color,
+                monthly_quota_copier: otherDevice.monthly_quota_copier,
+                copier_status: otherDevice.copier_status,
+                copier_bw_status: otherDevice.copier_bw_status,
+                copier_color_status: otherDevice.copier_color_status,
+                department_id: department_id || targetDevice.department_id || null
             });
 
             await db('ricoh_device_quotas').where('id', otherDevice.id).update({
                 user_code: targetDevice.user_code,
+                current_usage: targetDevice.current_usage,
                 current_usage_bw: targetDevice.current_usage_bw,
                 current_usage_color: targetDevice.current_usage_color,
                 current_usage_copier_bw: targetDevice.current_usage_copier_bw,
@@ -1190,10 +1353,21 @@ router.put('/devices/quotas/:id/quota', async (req, res) => {
                 lifetime_bw: targetDevice.lifetime_bw,
                 lifetime_color: targetDevice.lifetime_color,
                 lifetime_copier_bw: targetDevice.lifetime_copier_bw,
-                lifetime_copier_color: targetDevice.lifetime_copier_color
+                lifetime_copier_color: targetDevice.lifetime_copier_color,
+                monthly_quota: targetDevice.monthly_quota,
+                monthly_quota_bw: targetDevice.monthly_quota_bw,
+                monthly_quota_color: targetDevice.monthly_quota_color,
+                monthly_quota_copier_bw: targetDevice.monthly_quota_copier_bw,
+                monthly_quota_copier_color: targetDevice.monthly_quota_copier_color,
+                monthly_quota_copier: targetDevice.monthly_quota_copier,
+                copier_status: targetDevice.copier_status,
+                copier_bw_status: targetDevice.copier_bw_status,
+                copier_color_status: targetDevice.copier_color_status
             });
 
             await generateExcelFile();
+            await syncDepartmentQuotas(targetDevice.department_id);
+            await syncDepartmentQuotas(otherDevice.department_id);
             return res.json({ updated: 2, swapped: true });
         }
     }
@@ -1201,12 +1375,16 @@ router.put('/devices/quotas/:id/quota', async (req, res) => {
     const updatePayload = {
       monthly_quota_bw,
       monthly_quota_color,
+      monthly_quota_copier_bw: resolvedCpyBw,
+      monthly_quota_copier_color: resolvedCpyCol,
+      monthly_quota_copier: resolvedCpyTotal,
       user_code,
-      department_id: department_id || null
+      department_id: department_id || null,
+      supervisor_hr_id: resolvedSupHrId,
+      supervisor_name: resolvedSupName,
+      supervisor_whatsapp: resolvedSupWa,
+      wa_notify_mode: resolvedNotifyMode
     };
-    if (monthly_quota_copier !== undefined) {
-      updatePayload.monthly_quota_copier = monthly_quota_copier;
-    }
 
     const updated = await db('ricoh_device_quotas').where('id', req.params.id).update(updatePayload);
 
@@ -1237,23 +1415,63 @@ router.put('/devices/quotas/:id/status', async (req, res) => {
 
 router.put('/devices/quotas/:id/copier-status', async (req, res) => {
   try {
-    const { status } = req.body; // 'active' or 'locked'
+    const { status, mode } = req.body; // status: 'active'|'locked', mode?: 'bw'|'color'|'both'
     const targetDevice = await db('ricoh_device_quotas').where('id', req.params.id).first();
     if (!targetDevice) return res.status(404).json({ error: "Device not found" });
 
-    await db('ricoh_device_quotas').where('id', req.params.id).update({ copier_status: status });
+    let nextBw = targetDevice.copier_bw_status || (targetDevice.copier_status === 'locked' ? 'locked' : 'active');
+    let nextColor = targetDevice.copier_color_status || (targetDevice.copier_status === 'locked' ? 'locked' : 'active');
+
+    if (mode === 'bw') {
+      nextBw = status;
+    } else if (mode === 'color') {
+      nextColor = status;
+    } else {
+      nextBw = status;
+      nextColor = status;
+    }
+
+    const overall = (nextBw === 'locked' && nextColor === 'locked')
+      ? 'locked'
+      : ((nextBw === 'locked' || nextColor === 'locked') ? 'partial' : 'active');
+
+    await db('ricoh_device_quotas').where('id', req.params.id).update({
+      copier_bw_status: nextBw,
+      copier_color_status: nextColor,
+      copier_status: overall
+    });
 
     // Push hardware update if user has PIN
     if (targetDevice.user_code) {
       try {
         const { syncCopierPermissionToPrinters } = require('../services/ricoh_copier_lock');
-        syncCopierPermissionToPrinters(targetDevice.user_code, status === 'active').catch(e => {
+        syncCopierPermissionToPrinters(targetDevice.user_code, {
+          allowBw: nextBw === 'active',
+          allowColor: nextColor === 'active'
+        }).catch(e => {
           console.error('[COPIER STATUS ERROR] Failed to push to hardware:', e.message);
         });
       } catch(e) {}
     }
 
-    res.json({ message: `Copier status updated to ${status}`, copier_status: status });
+    res.json({
+      message: `Copier status updated (B/W: ${nextBw}, Color: ${nextColor})`,
+      copier_status: overall,
+      copier_bw_status: nextBw,
+      copier_color_status: nextColor
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ricoh/block-unregistered-pins - Block Copy & Print on all Ricoh PINs not registered in app
+router.post('/block-unregistered-pins', async (req, res) => {
+  try {
+    const org = req.organization || req.headers['x-organization'] || (process.env.PLANT_CODE || 'TCF-KG');
+    const { lockUnregisteredRicohPins } = require('../services/ricoh_copier_lock');
+    const result = await lockUnregisteredRicohPins(org);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1295,7 +1513,7 @@ router.delete('/devices/quotas/:id', async (req, res) => {
 
 router.post('/devices/quotas/reset-all', async (req, res) => {
   try {
-    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || 'TCF-SG';
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
     const result = await performBillingCycleReset(null, targetOrg);
     await generateExcelFile(targetOrg);
     res.json({ message: `All device print quotas reset successfully for ${targetOrg} (21st billing cycle archived)`, ...result });
@@ -1359,7 +1577,9 @@ router.get('/devices/quotas/export-excel', async (req, res) => {
 
       'B/W Quota': row.monthly_quota_bw || 0,
       'Color Quota': row.monthly_quota_color || 0,
-      'Copy Quota': row.monthly_quota_copier || 0,
+      'Copy B/W Quota': row.monthly_quota_copier_bw ?? (row.monthly_quota_copier || 0),
+      'Copy Color Quota': row.monthly_quota_copier_color ?? 0,
+      'Copy Total Quota': row.monthly_quota_copier || 0,
       'Print B/W Usage': Number(row.current_usage_bw) || 0,
       'Print Color Usage': Number(row.current_usage_color) || 0,
       'Copy B/W Usage': Number(row.current_usage_copier_bw) || 0,
@@ -1592,11 +1812,11 @@ router.get('/reports/user-details', async (req, res) => {
         copier_status: profile.copier_status,
         ip_address: profile.ip_address || profile.inventory_ip,
         user_whatsapp: profile.user_whatsapp,
-        monthly_quota_bw: profile.monthly_quota_bw || 1000,
+        monthly_quota_bw: profile.monthly_quota_bw != null ? Number(profile.monthly_quota_bw) : 1000,
         current_usage_bw: profile.current_usage_bw || 0,
-        monthly_quota_color: profile.monthly_quota_color || 500,
+        monthly_quota_color: profile.monthly_quota_color != null ? Number(profile.monthly_quota_color) : 500,
         current_usage_color: profile.current_usage_color || 0,
-        monthly_quota_copier: profile.monthly_quota_copier || 200,
+        monthly_quota_copier: profile.monthly_quota_copier != null ? Number(profile.monthly_quota_copier) : 200,
         current_usage_copier_bw: profile.current_usage_copier_bw || 0,
         total_usage_cycle: (Number(profile.current_usage_bw) || 0) + (Number(profile.current_usage_color) || 0) + (Number(profile.current_usage_copier_bw) || 0)
       },
@@ -1679,7 +1899,7 @@ router.get('/reports/user-details/export', async (req, res) => {
       .orderBy('ricoh_print_jobs.id', 'desc')
       .limit(1000);
 
-    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || 'TCF-SG';
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
     const summaryData = [
       { Parameter: 'Cabang / Lokasi Plant', Nilai: targetOrg === 'TCF-KG' ? 'PT. Tri Centrum Fortuna - Plant Karawang (KG)' : 'PT. Tri Centrum Fortuna - Plant Sadang (SG)' },
       { Parameter: 'Nama Komputer / Hostname', Nilai: profile.computer_name },
@@ -1790,6 +2010,292 @@ router.get('/devices/status', async (req, res) => {
 
 
 
+// GET /api/ricoh/executive-summary - Unified accurate KPIs, Daily/Monthly Charts, Dept & Cost Analytics
+router.get('/executive-summary', async (req, res) => {
+  try {
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const cycle = getCurrentBillingCycle();
+
+    const RATE_BW = 100;
+    const RATE_COLOR = 1400;
+    const BASE_FEE = 1900000;
+    const FREE_BW = 1000;
+    const FREE_COLOR = 100;
+
+    const calcContractCost = (bwAll, colAll) => {
+      const overBw = Math.max(0, bwAll - FREE_BW) * RATE_BW;
+      const overCol = Math.max(0, colAll - FREE_COLOR) * RATE_COLOR;
+      return {
+        baseFee: BASE_FEE,
+        overBw,
+        overCol,
+        totalNonPpn: BASE_FEE + overBw + overCol
+      };
+    };
+
+    // Today & 7-day boundaries in Asia/Jakarta (UTC+7)
+    const nowJkt = new Date(Date.now() + 7 * 3600 * 1000);
+    const todayStr = nowJkt.toISOString().slice(0, 10);
+    const weekStartDate = new Date(nowJkt);
+    weekStartDate.setUTCDate(weekStartDate.getUTCDate() - 6);
+    const weekStartStr = weekStartDate.toISOString().slice(0, 10);
+    const seriesStartDate = new Date(nowJkt);
+    seriesStartDate.setUTCDate(seriesStartDate.getUTCDate() - 13);
+    const seriesStartStr = seriesStartDate.toISOString().slice(0, 10);
+
+    // 1. Live Device Quotas + Department + User identity
+    const devRows = await orgDb('ricoh_device_quotas as rdq')
+      .leftJoin('ricoh_departments as rd', 'rdq.department_id', 'rd.id')
+      .leftJoin('assets as a', orgDb.raw('a.id = COALESCE(rdq.asset_id, (SELECT a2.id FROM assets a2 WHERE LOWER(TRIM(a2.name)) = LOWER(TRIM(rdq.computer_name)) LIMIT 1))'))
+      .leftJoin('users as u', 'a.user_id', 'u.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('a.hr_employee_id', '=', 'hr.id').orOn('u.hr_employee_id', '=', 'hr.id');
+      })
+      .select(
+        'rdq.*',
+        orgDb.raw("COALESCE(rd.name, hr.department, u.department, 'General') as resolved_dept"),
+        orgDb.raw("COALESCE(hr.name, u.name, a.contact, 'Unassigned') as resolved_user")
+      );
+
+    let qPrtBw = 0, qPrtCol = 0, qCpyBw = 0, qCpyCol = 0;
+    let uPrtBw = 0, uPrtCol = 0, uCpyBw = 0, uCpyCol = 0;
+    let activeDevs = 0;
+    const deptAgg = {};
+    const topUsersRaw = [];
+
+    for (const d of devRows) {
+      const dqBw = d.monthly_quota_bw != null ? Number(d.monthly_quota_bw) : 1000;
+      const dqCol = d.monthly_quota_color != null ? Number(d.monthly_quota_color) : 500;
+      const fbCpy = d.monthly_quota_copier != null ? Number(d.monthly_quota_copier) : 200;
+      const dqCbw = d.monthly_quota_copier_bw != null ? Number(d.monthly_quota_copier_bw) : Math.round(fbCpy * 0.8);
+      const dqCcol = d.monthly_quota_copier_color != null ? Number(d.monthly_quota_copier_color) : Math.max(0, fbCpy - dqCbw);
+      const dqTot = dqBw + dqCol + dqCbw + dqCcol;
+
+      const duBw = Number(d.current_usage_bw) || 0;
+      const duCol = Number(d.current_usage_color) || 0;
+      const duCbw = Number(d.current_usage_copier_bw) || 0;
+      const duCcol = Number(d.current_usage_copier_color) || 0;
+      const duTot = duBw + duCol + duCbw + duCcol;
+
+      qPrtBw += dqBw; qPrtCol += dqCol; qCpyBw += dqCbw; qCpyCol += dqCcol;
+      uPrtBw += duBw; uPrtCol += duCol; uCpyBw += duCbw; uCpyCol += duCcol;
+      if (duTot > 0) activeDevs += 1;
+
+      const dp = d.resolved_dept || 'General';
+      if (!deptAgg[dp]) {
+        deptAgg[dp] = {
+          name: dp, pc_count: 0, active_pc: 0,
+          q_prt_bw: 0, q_prt_col: 0, q_cpy_bw: 0, q_cpy_col: 0, q_total: 0,
+          u_prt_bw: 0, u_prt_col: 0, u_cpy_bw: 0, u_cpy_col: 0, u_total: 0,
+          bw_all: 0, col_all: 0, cost_bw: 0, cost_color: 0, cost_total: 0
+        };
+      }
+      const g = deptAgg[dp];
+      g.pc_count += 1;
+      if (duTot > 0) g.active_pc += 1;
+      g.q_prt_bw += dqBw; g.q_prt_col += dqCol; g.q_cpy_bw += dqCbw; g.q_cpy_col += dqCcol; g.q_total += dqTot;
+      g.u_prt_bw += duBw; g.u_prt_col += duCol; g.u_cpy_bw += duCbw; g.u_cpy_col += duCcol; g.u_total += duTot;
+      const bwAllD = duBw + duCbw;
+      const colAllD = duCol + duCcol;
+      g.bw_all += bwAllD;
+      g.col_all += colAllD;
+      g.cost_bw += bwAllD * RATE_BW;
+      g.cost_color += colAllD * RATE_COLOR;
+      g.cost_total = g.cost_bw + g.cost_color;
+
+      topUsersRaw.push({
+        computer_name: d.computer_name,
+        user_name: d.resolved_user,
+        department: dp,
+        ...(req.user ? { pin: d.user_code || '-' } : {}),
+        status: d.status || 'active',
+        u_prt_bw: duBw, u_prt_col: duCol, u_cpy_bw: duCbw, u_cpy_col: duCcol, u_total: duTot,
+        q_total: dqTot,
+        cost_bw: bwAllD * RATE_BW,
+        cost_color: colAllD * RATE_COLOR,
+        cost_total: (bwAllD * RATE_BW) + (colAllD * RATE_COLOR)
+      });
+    }
+
+    const departmentBreakdown = Object.values(deptAgg)
+      .map(d => ({
+        ...d,
+        utilization_pct: d.q_total > 0 ? Number(((d.u_total / d.q_total) * 100).toFixed(1)) : 0
+      }))
+      .sort((a, b) => b.u_total - a.u_total);
+
+    const topUsers = topUsersRaw
+      .filter(u => u.u_total > 0)
+      .sort((a, b) => b.u_total - a.u_total)
+      .slice(0, 12);
+
+    // 2. Daily Series (14 days cleanly from ricoh_daily_usage)
+    const dailyRows = await orgDb('ricoh_daily_usage')
+      .where('date', '>=', seriesStartStr)
+      .andWhere('date', '<=', todayStr)
+      .groupBy('date')
+      .select(
+        'date',
+        orgDb.raw('COALESCE(SUM(bw_usage),0)::int as bw'),
+        orgDb.raw('COALESCE(SUM(color_usage),0)::int as color'),
+        orgDb.raw('COALESCE(SUM(copier_bw_usage),0)::int as copier_bw'),
+        orgDb.raw('COALESCE(SUM(copier_color_usage),0)::int as copier_color')
+      )
+      .orderBy('date', 'asc');
+
+    const dailyMap = {};
+    for (const r of dailyRows) {
+      dailyMap[String(r.date).slice(0, 10)] = r;
+    }
+
+    const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const dailySeries = [];
+    let todayStat = { bw: 0, color: 0, copier_bw: 0, copier_color: 0, total: 0 };
+    let weekStat = { bw: 0, color: 0, copier_bw: 0, copier_color: 0, total: 0 };
+
+    for (let i = 13; i >= 0; i--) {
+      const dt = new Date(nowJkt);
+      dt.setUTCDate(dt.getUTCDate() - i);
+      const ymd = dt.toISOString().slice(0, 10);
+      const row = dailyMap[ymd] || {};
+      const bw = Number(row.bw) || 0;
+      const color = Number(row.color) || 0;
+      const cbw = Number(row.copier_bw) || 0;
+      const ccol = Number(row.copier_color) || 0;
+      const bwAll = bw + cbw;
+      const colAll = color + ccol;
+      const total = bwAll + colAll;
+      const costRp = (bwAll * RATE_BW) + (colAll * RATE_COLOR);
+
+      const mNum = parseInt(ymd.slice(5, 7), 10) - 1;
+      dailySeries.push({
+        date: ymd,
+        label: `${ymd.slice(8, 10)} ${monthsShort[mNum] || ''}`,
+        print_bw: bw,
+        print_color: color,
+        copy_bw: cbw,
+        copy_color: ccol,
+        bw_all: bwAll,
+        col_all: colAll,
+        total,
+        cost_rp: costRp
+      });
+
+      if (ymd === todayStr) {
+        todayStat = { bw, color, copier_bw: cbw, copier_color: ccol, bw_all: bwAll, col_all: colAll, total };
+      }
+      if (ymd >= weekStartStr) {
+        weekStat.bw += bw;
+        weekStat.color += color;
+        weekStat.copier_bw += cbw;
+        weekStat.copier_color += ccol;
+        weekStat.total += total;
+      }
+    }
+
+    // 3. Monthly History + Active Cycle Series
+    const monthlyAgg = await orgDb('ricoh_monthly_usage')
+      .select('month')
+      .sum({ bw: 'bw_usage', color: 'color_usage', cbw: 'copier_bw_usage', ccol: 'copier_color_usage' })
+      .groupBy('month')
+      .orderBy('month', 'asc');
+
+    const monthlySeries = monthlyAgg.map(m => {
+      const bw = Number(m.bw) || 0;
+      const color = Number(m.color) || 0;
+      const cbw = Number(m.cbw) || 0;
+      const ccol = Number(m.ccol) || 0;
+      const bwAll = bw + cbw;
+      const colAll = color + ccol;
+      const cc = calcContractCost(bwAll, colAll);
+      const [yr, mo] = String(m.month || '').split('-');
+      const mIdx = (parseInt(mo, 10) || 1) - 1;
+      return {
+        month: m.month,
+        label: `${monthsShort[mIdx] || mo} ${yr || ''}`.trim(),
+        bw,
+        color,
+        copier_bw: cbw,
+        copier_color: ccol,
+        bw_all: bwAll,
+        col_all: colAll,
+        print_total: bw + color,
+        copy_total: cbw + ccol,
+        total: bwAll + colAll,
+        cost_bw: bwAll * RATE_BW,
+        cost_color: colAll * RATE_COLOR,
+        bill_non_ppn: cc.totalNonPpn,
+        is_active: false
+      };
+    });
+
+    // Append active billing cycle as latest bar
+    const cycBwAll = uPrtBw + uCpyBw;
+    const cycColAll = uPrtCol + uCpyCol;
+    const cycContract = calcContractCost(cycBwAll, cycColAll);
+    const [cYr, cMo] = String(cycle.billingMonth).split('-');
+    const cMIdx = (parseInt(cMo, 10) || 1) - 1;
+    monthlySeries.push({
+      month: cycle.billingMonth,
+      label: `${monthsShort[cMIdx] || cMo} ${cYr} (Aktif)`,
+      bw: uPrtBw,
+      color: uPrtCol,
+      copier_bw: uCpyBw,
+      copier_color: uCpyCol,
+      bw_all: cycBwAll,
+      col_all: cycColAll,
+      print_total: uPrtBw + uPrtCol,
+      copy_total: uCpyBw + uCpyCol,
+      total: cycBwAll + cycColAll,
+      cost_bw: cycBwAll * RATE_BW,
+      cost_color: cycColAll * RATE_COLOR,
+      bill_non_ppn: cycContract.totalNonPpn,
+      is_active: true
+    });
+
+    const qTotalAll = qPrtBw + qPrtCol + qCpyBw + qCpyCol;
+    const uTotalAll = uPrtBw + uPrtCol + uCpyBw + uCpyCol;
+
+    res.json({
+      org: targetOrg,
+      cycle,
+      contractPricing: { rateBw: RATE_BW, rateColor: RATE_COLOR, monthlyBaseFee: BASE_FEE, freeBwPerMonth: FREE_BW, freeColorPerMonth: FREE_COLOR },
+      kpis: {
+        today: todayStat,
+        week: weekStat,
+        cycle: {
+          u_prt_bw: uPrtBw,
+          u_prt_col: uPrtCol,
+          u_cpy_bw: uCpyBw,
+          u_cpy_col: uCpyCol,
+          bw_all: cycBwAll,
+          col_all: cycColAll,
+          u_total: uTotalAll,
+          q_prt_bw: qPrtBw,
+          q_prt_col: qPrtCol,
+          q_cpy_bw: qCpyBw,
+          q_cpy_col: qCpyCol,
+          q_total: qTotalAll,
+          utilization_pct: qTotalAll > 0 ? Number(((uTotalAll / qTotalAll) * 100).toFixed(1)) : 0,
+          active_devices: activeDevs,
+          total_devices: devRows.length,
+          cost_bw_gross: cycBwAll * RATE_BW,
+          cost_col_gross: cycColAll * RATE_COLOR,
+          cost_total_gross: (cycBwAll * RATE_BW) + (cycColAll * RATE_COLOR),
+          contract_cost: cycContract
+        }
+      },
+      dailySeries,
+      monthlySeries,
+      departmentBreakdown,
+      topUsers
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/monthly-stats', async (req, res) => {
   try {
     const cycle = getCurrentBillingCycle();
@@ -1843,33 +2349,30 @@ router.get('/monthly-stats', async (req, res) => {
 
 router.get('/monthly-logs', async (req, res) => {
   try {
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
     const cycle = getCurrentBillingCycle();
-    
-    const currentRows = await db('ricoh_daily_usage')
-      .leftJoin('ricoh_departments', 'ricoh_daily_usage.department_id', 'ricoh_departments.id')
-      .leftJoin('assets', 'ricoh_daily_usage.computer_name', 'assets.name')
-      .leftJoin('users', 'assets.user_id', 'users.id')
+
+    // Active cycle uses authoritative ricoh_device_quotas counters so Monthly Reports matches Live & Management PDF 100%
+    const currentRows = await orgDb('ricoh_device_quotas as rdq')
+      .leftJoin('ricoh_departments as rd', 'rdq.department_id', 'rd.id')
+      .leftJoin('assets as a', orgDb.raw('a.id = COALESCE(rdq.asset_id, (SELECT a2.id FROM assets a2 WHERE LOWER(TRIM(a2.name)) = LOWER(TRIM(rdq.computer_name)) LIMIT 1))'))
+      .leftJoin('users as u', 'a.user_id', 'u.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('a.hr_employee_id', '=', 'hr.id').orOn('u.hr_employee_id', '=', 'hr.id');
+      })
       .select(
-        'ricoh_daily_usage.computer_name', 
-        'ricoh_daily_usage.user_code', 
-        'ricoh_departments.name as department_name',
-        'users.name as inventory_user_name',
-        'assets.contact as inventory_contact'
-      )
-      .sum('ricoh_daily_usage.bw_usage as bw_usage')
-      .sum('ricoh_daily_usage.color_usage as color_usage')
-      .sum('ricoh_daily_usage.copier_bw_usage as copier_bw_usage')
-      .sum('ricoh_daily_usage.copier_color_usage as copier_color_usage')
-      .where('ricoh_daily_usage.date', '>=', cycle.startDate)
-      .andWhere('ricoh_daily_usage.date', '<=', cycle.endDate)
-      .groupBy(
-        'ricoh_daily_usage.computer_name',
-        'ricoh_daily_usage.user_code',
-        'ricoh_departments.name',
-        'users.name',
-        'assets.contact'
+        'rdq.computer_name',
+        'rdq.user_code',
+        orgDb.raw("COALESCE(rd.name, hr.department, u.department, 'General') as department_name"),
+        orgDb.raw("COALESCE(hr.name, u.name, a.contact, '-') as inventory_user_name"),
+        'a.contact as inventory_contact',
+        orgDb.raw('COALESCE(rdq.current_usage_bw, 0)::int as bw_usage'),
+        orgDb.raw('COALESCE(rdq.current_usage_color, 0)::int as color_usage'),
+        orgDb.raw('COALESCE(rdq.current_usage_copier_bw, 0)::int as copier_bw_usage'),
+        orgDb.raw('COALESCE(rdq.current_usage_copier_color, 0)::int as copier_color_usage')
       );
-      
+
     const formattedCurrentRows = currentRows
       .filter(r => (Number(r.bw_usage) + Number(r.color_usage) + Number(r.copier_bw_usage) + Number(r.copier_color_usage)) > 0)
       .map(r => ({
@@ -1877,68 +2380,291 @@ router.get('/monthly-logs', async (req, res) => {
         id: 'curr_' + r.computer_name,
         month: cycle.billingMonth + ` (${cycle.label} - Aktif)`
       }));
-    
-    const historicalRows = await db('ricoh_monthly_usage')
-      .leftJoin('ricoh_departments', 'ricoh_monthly_usage.department_id', 'ricoh_departments.id')
-      .leftJoin('ricoh_device_quotas', 'ricoh_monthly_usage.computer_name', 'ricoh_device_quotas.computer_name')
-      .leftJoin('assets', function() {
-        this.on('ricoh_device_quotas.asset_id', '=', 'assets.id')
-            .orOn('ricoh_monthly_usage.computer_name', '=', 'assets.name');
+
+    const historicalRows = await orgDb('ricoh_monthly_usage as m')
+      .leftJoin('ricoh_device_quotas as rdq', 'm.computer_name', 'rdq.computer_name')
+      .leftJoin('ricoh_departments as rd', orgDb.raw('COALESCE(rdq.department_id, m.department_id) = rd.id'))
+      .leftJoin('assets as a', orgDb.raw('a.id = COALESCE(rdq.asset_id, (SELECT a2.id FROM assets a2 WHERE LOWER(TRIM(a2.name)) = LOWER(TRIM(m.computer_name)) LIMIT 1))'))
+      .leftJoin('users as u', 'a.user_id', 'u.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('a.hr_employee_id', '=', 'hr.id').orOn('u.hr_employee_id', '=', 'hr.id');
       })
-      .leftJoin('users', 'assets.user_id', 'users.id')
       .select(
-        'ricoh_monthly_usage.*', 
-        'ricoh_departments.name as department_name',
-        'users.name as inventory_user_name',
-        'assets.contact as inventory_contact'
+        'm.*',
+        orgDb.raw('COALESCE(rdq.user_code, m.user_code) as user_code'),
+        orgDb.raw("COALESCE(rd.name, hr.department, u.department, 'General') as department_name"),
+        orgDb.raw("COALESCE(hr.name, u.name, a.contact, '-') as inventory_user_name"),
+        'a.contact as inventory_contact'
       )
-      .orderBy('ricoh_monthly_usage.month', 'desc')
-      .orderBy('ricoh_monthly_usage.bw_usage', 'desc');
-      
-    res.json([...formattedCurrentRows, ...historicalRows]);
+      .orderBy('m.month', 'desc')
+      .orderBy('m.bw_usage', 'desc');
+
+    const combinedMonthly = [...formattedCurrentRows, ...historicalRows];
+    res.json(req.user ? combinedMonthly : combinedMonthly.map(r => ({ ...r, user_code: null })));
   } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/custom-range-logs', async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) return res.status(400).json({ error: 'Missing start or end date' });
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
 
-    const rows = await db('ricoh_daily_usage')
-      .leftJoin('ricoh_departments', 'ricoh_daily_usage.department_id', 'ricoh_departments.id')
-      .leftJoin('assets', 'ricoh_daily_usage.computer_name', 'assets.name')
-      .leftJoin('users', 'assets.user_id', 'users.id')
+    const rows = await orgDb('ricoh_daily_usage as du')
+      .leftJoin('ricoh_device_quotas as rdq', 'du.computer_name', 'rdq.computer_name')
+      .leftJoin('ricoh_departments as rd', orgDb.raw('COALESCE(rdq.department_id, du.department_id) = rd.id'))
+      .leftJoin('assets as a', orgDb.raw('a.id = COALESCE(rdq.asset_id, (SELECT a2.id FROM assets a2 WHERE LOWER(TRIM(a2.name)) = LOWER(TRIM(du.computer_name)) LIMIT 1))'))
+      .leftJoin('users as u', 'a.user_id', 'u.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('a.hr_employee_id', '=', 'hr.id').orOn('u.hr_employee_id', '=', 'hr.id');
+      })
       .select(
-        'ricoh_daily_usage.computer_name', 
-        'ricoh_daily_usage.user_code', 
-        'ricoh_departments.name as department_name',
-        'users.name as inventory_user_name',
-        'assets.contact as inventory_contact'
+        'du.computer_name',
+        orgDb.raw('MAX(COALESCE(rdq.user_code, du.user_code)) as user_code'),
+        orgDb.raw("MAX(COALESCE(rd.name, hr.department, u.department, 'General')) as department_name"),
+        orgDb.raw("MAX(COALESCE(hr.name, u.name, a.contact, '-')) as inventory_user_name"),
+        orgDb.raw("MAX(a.contact) as inventory_contact")
       )
-      .sum('ricoh_daily_usage.bw_usage as bw_usage')
-      .sum('ricoh_daily_usage.color_usage as color_usage')
-      .sum('ricoh_daily_usage.copier_bw_usage as copier_bw_usage')
-      .sum('ricoh_daily_usage.copier_color_usage as copier_color_usage')
-      .where('ricoh_daily_usage.date', '>=', start)
-      .where('ricoh_daily_usage.date', '<=', end)
-      .groupBy(
-        'ricoh_daily_usage.computer_name',
-        'ricoh_daily_usage.user_code',
-        'ricoh_departments.name',
-        'users.name',
-        'assets.contact'
-      );
-      
-    // Format them to match the expected frontend structure
+      .sum('du.bw_usage as bw_usage')
+      .sum('du.color_usage as color_usage')
+      .sum('du.copier_bw_usage as copier_bw_usage')
+      .sum('du.copier_color_usage as copier_color_usage')
+      .where('du.date', '>=', start)
+      .where('du.date', '<=', end)
+      .groupBy('du.computer_name');
+
     const formattedRows = rows.map(r => ({
       ...r,
+      ...(req.user ? {} : { user_code: null }),
       month: `${start} to ${end}`,
       id: `custom_${r.computer_name}`
     })).filter(r => (Number(r.bw_usage) + Number(r.color_usage) + Number(r.copier_bw_usage) + Number(r.copier_color_usage)) > 0);
-    
+
     res.json(formattedRows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ricoh/management-report-data - Flexible data endpoint for Executive Management PDF (Active Cycle / 1-N Months / Custom Date-Time Range)
+router.get('/management-report-data', async (req, res) => {
+  try {
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const cycle = getCurrentBillingCycle();
+
+    const mode = req.query.mode || 'meta';
+
+    // Always collect available months (archived + active billingMonth)
+    const archivedMonthsRows = await orgDb('ricoh_monthly_usage')
+      .distinct('month')
+      .orderBy('month', 'desc');
+    const availableMonths = [...new Set([cycle.billingMonth, ...archivedMonthsRows.map(r => r.month).filter(Boolean)])];
+
+    if (mode === 'meta') {
+      return res.json({
+        billingCycle: cycle,
+        availableMonths
+      });
+    }
+
+    // Fetch authoritative device & employee identity lookup map so historical computer names map cleanly to current HR/Department
+    const devLookupRows = await orgDb('ricoh_device_quotas as rdq')
+      .leftJoin('ricoh_departments as rd', 'rdq.department_id', 'rd.id')
+      .leftJoin('assets as a', orgDb.raw('a.id = COALESCE(rdq.asset_id, (SELECT a2.id FROM assets a2 WHERE LOWER(TRIM(a2.name)) = LOWER(TRIM(rdq.computer_name)) LIMIT 1))'))
+      .leftJoin('users as u', 'a.user_id', 'u.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('a.hr_employee_id', '=', 'hr.id').orOn('u.hr_employee_id', '=', 'hr.id');
+      })
+      .select(
+        'rdq.*',
+        orgDb.raw("COALESCE(rd.name, hr.department, u.department, 'General') as resolved_dept"),
+        orgDb.raw("COALESCE(hr.name, u.name, a.contact, 'Unassigned') as resolved_user")
+      );
+
+    const devByName = {};
+    for (const d of devLookupRows) {
+      devByName[(d.computer_name || '').toLowerCase().trim()] = d;
+    }
+
+    if (mode === 'months') {
+      const rawMonths = req.query.months
+        ? String(req.query.months).split(',').map(s => s.trim()).filter(Boolean)
+        : [];
+      const startMonth = req.query.startMonth;
+      const endMonth = req.query.endMonth;
+
+      let selectedMonths = rawMonths;
+      if (selectedMonths.length === 0 && (startMonth || endMonth)) {
+        selectedMonths = availableMonths.filter(m => {
+          if (startMonth && m < startMonth) return false;
+          if (endMonth && m > endMonth) return false;
+          return true;
+        });
+      }
+      if (selectedMonths.length === 0) {
+        selectedMonths = [cycle.billingMonth];
+      }
+      selectedMonths.sort();
+
+      const includeActive = selectedMonths.includes(cycle.billingMonth);
+      const archivedTargets = selectedMonths.filter(m => m !== cycle.billingMonth);
+
+      const perDevice = {};
+      const monthBreakdownMap = {};
+      const deptMonthlyMap = {};
+      for (const m of selectedMonths) {
+        monthBreakdownMap[m] = { month: m, bw: 0, color: 0, copier_bw: 0, copier_color: 0, total: 0, is_active: m === cycle.billingMonth };
+      }
+
+      const upsertUsage = (pcName, userCode, deptFallback, bw, col, cbw, ccol, monthKey) => {
+        const key = (pcName || '').toLowerCase().trim();
+        if (!key) return;
+        const meta = devByName[key];
+        const resolvedDeptName = meta?.resolved_dept || deptFallback || 'General';
+        if (!perDevice[key]) {
+          perDevice[key] = {
+            id: meta?.id || pcName,
+            computer_name: meta?.computer_name || pcName,
+            inventory_user_name: meta?.resolved_user || '-',
+            department_name: resolvedDeptName,
+            user_code: req.user ? (meta?.user_code || userCode || '-') : null,
+            status: meta?.status || 'active',
+            monthly_quota_bw: meta ? (meta.monthly_quota_bw ?? 0) : 0,
+            monthly_quota_color: meta ? (meta.monthly_quota_color ?? 0) : 0,
+            monthly_quota_copier_bw: meta ? (meta.monthly_quota_copier_bw ?? 0) : 0,
+            monthly_quota_copier_color: meta ? (meta.monthly_quota_copier_color ?? 0) : 0,
+            monthly_quota_copier: meta ? ((meta.monthly_quota_copier_bw ?? 0) + (meta.monthly_quota_copier_color ?? 0)) : 0,
+            current_usage_bw: 0,
+            current_usage_color: 0,
+            current_usage_copier_bw: 0,
+            current_usage_copier_color: 0
+          };
+        }
+        const nBw = Number(bw) || 0;
+        const nCol = Number(col) || 0;
+        const nCbw = Number(cbw) || 0;
+        const nCcol = Number(ccol) || 0;
+        const nTot = nBw + nCol + nCbw + nCcol;
+        perDevice[key].current_usage_bw += nBw;
+        perDevice[key].current_usage_color += nCol;
+        perDevice[key].current_usage_copier_bw += nCbw;
+        perDevice[key].current_usage_copier_color += nCcol;
+
+        if (monthBreakdownMap[monthKey]) {
+          monthBreakdownMap[monthKey].bw += nBw;
+          monthBreakdownMap[monthKey].color += nCol;
+          monthBreakdownMap[monthKey].copier_bw += nCbw;
+          monthBreakdownMap[monthKey].copier_color += nCcol;
+          monthBreakdownMap[monthKey].total += nTot;
+        }
+
+        if (monthKey) {
+          if (!deptMonthlyMap[resolvedDeptName]) {
+            deptMonthlyMap[resolvedDeptName] = { department: resolvedDeptName, total: 0, months: {} };
+          }
+          if (!deptMonthlyMap[resolvedDeptName].months[monthKey]) {
+            deptMonthlyMap[resolvedDeptName].months[monthKey] = { bw: 0, color: 0, copier_bw: 0, copier_color: 0, total: 0 };
+          }
+          const dm = deptMonthlyMap[resolvedDeptName].months[monthKey];
+          dm.bw += nBw;
+          dm.color += nCol;
+          dm.copier_bw += nCbw;
+          dm.copier_color += nCcol;
+          dm.total += nTot;
+          deptMonthlyMap[resolvedDeptName].total += nTot;
+        }
+      };
+
+      if (archivedTargets.length > 0) {
+        const archRows = await orgDb('ricoh_monthly_usage as m')
+          .leftJoin('ricoh_departments as rd', 'm.department_id', 'rd.id')
+          .whereIn('m.month', archivedTargets)
+          .select('m.*', 'rd.name as dept_fallback');
+        for (const r of archRows) {
+          upsertUsage(r.computer_name, r.user_code, r.dept_fallback, r.bw_usage, r.color_usage, r.copier_bw_usage, r.copier_color_usage, r.month);
+        }
+      }
+
+      if (includeActive) {
+        for (const d of devLookupRows) {
+          const tot = (Number(d.current_usage_bw) || 0) + (Number(d.current_usage_color) || 0) + (Number(d.current_usage_copier_bw) || 0) + (Number(d.current_usage_copier_color) || 0);
+          if (tot > 0) {
+            upsertUsage(d.computer_name, d.user_code, d.resolved_dept, d.current_usage_bw, d.current_usage_color, d.current_usage_copier_bw, d.current_usage_copier_color, cycle.billingMonth);
+          }
+        }
+      }
+
+      const deptMonthlyBreakdown = Object.values(deptMonthlyMap).sort((a, b) => b.total - a.total);
+
+      return res.json({
+        mode: 'months',
+        selectedMonths,
+        monthsCount: selectedMonths.length,
+        hasSeptemberAnomaly: false,
+        monthlyBreakdown: selectedMonths.map(m => monthBreakdownMap[m]),
+        deptMonthlyBreakdown,
+        devices: Object.values(perDevice),
+        billingCycle: cycle
+      });
+    }
+
+    if (mode === 'custom') {
+      const { startDate, endDate } = req.query;
+      if (!startDate || !endDate) return res.status(400).json({ error: 'startDate dan endDate wajib diisi' });
+
+      const dailyRows = await orgDb('ricoh_daily_usage as du')
+        .leftJoin('ricoh_departments as rd', 'du.department_id', 'rd.id')
+        .where('du.date', '>=', startDate)
+        .andWhere('du.date', '<=', endDate)
+        .groupBy('du.computer_name')
+        .select(
+          'du.computer_name',
+          orgDb.raw('MAX(du.user_code) as user_code'),
+          orgDb.raw('MAX(rd.name) as dept_fallback'),
+          orgDb.raw('COALESCE(SUM(du.bw_usage),0)::int as bw_usage'),
+          orgDb.raw('COALESCE(SUM(du.color_usage),0)::int as color_usage'),
+          orgDb.raw('COALESCE(SUM(du.copier_bw_usage),0)::int as copier_bw_usage'),
+          orgDb.raw('COALESCE(SUM(du.copier_color_usage),0)::int as copier_color_usage')
+        );
+
+      const devices = dailyRows
+        .filter(r => (r.bw_usage + r.color_usage + r.copier_bw_usage + r.copier_color_usage) > 0)
+        .map(r => {
+          const meta = devByName[(r.computer_name || '').toLowerCase().trim()];
+          return {
+            id: meta?.id || r.computer_name,
+            computer_name: meta?.computer_name || r.computer_name,
+            inventory_user_name: meta?.resolved_user || '-',
+            department_name: meta?.resolved_dept || r.dept_fallback || 'General',
+            user_code: req.user ? (meta?.user_code || r.user_code || '-') : null,
+            status: meta?.status || 'active',
+            monthly_quota_bw: meta ? (meta.monthly_quota_bw ?? 0) : 0,
+            monthly_quota_color: meta ? (meta.monthly_quota_color ?? 0) : 0,
+            monthly_quota_copier_bw: meta ? (meta.monthly_quota_copier_bw ?? 0) : 0,
+            monthly_quota_copier_color: meta ? (meta.monthly_quota_copier_color ?? 0) : 0,
+            monthly_quota_copier: meta ? ((meta.monthly_quota_copier_bw ?? 0) + (meta.monthly_quota_copier_color ?? 0)) : 0,
+            current_usage_bw: Number(r.bw_usage) || 0,
+            current_usage_color: Number(r.color_usage) || 0,
+            current_usage_copier_bw: Number(r.copier_bw_usage) || 0,
+            current_usage_copier_color: Number(r.copier_color_usage) || 0
+          };
+        });
+
+      return res.json({
+        mode: 'custom',
+        startDate,
+        endDate,
+        dailyCopierCaveat: startDate < '2026-09-24',
+        devices,
+        billingCycle: cycle
+      });
+    }
+
+    res.status(400).json({ error: 'Invalid report mode' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2008,17 +2734,84 @@ router.post('/assign-user', async (req, res) => {
 // ==========================================
 // RICOH QUOTA NOTIFICATIONS & WA ALERTS
 // ==========================================
-const { 
-  getDeviceQuotaStatuses, 
-  sendQuotaWarning, 
-  checkAndDispatchAllQuotaWarnings 
+const {
+  ensureSupervisorColumns,
+  isWaQuotaNotificationsEnabled,
+  getWaNotificationConfig,
+  getDeviceQuotaStatuses,
+  sendQuotaWarning,
+  checkAndDispatchAllQuotaWarnings
 } = require('../services/ricoh_quota_notifier');
+
+router.get('/supervisors', async (req, res) => {
+  try {
+    const rows = await db('hr_employees')
+      .select('id', 'nik', 'name', 'position', 'department', 'phone', 'status')
+      .orderByRaw(`
+        CASE
+          WHEN LOWER(COALESCE(position, '')) ~ '(plant head|direktur|director)' THEN 1
+          WHEN LOWER(COALESCE(position, '')) ~ '(departement head|department head|dept head|manager)' THEN 2
+          WHEN LOWER(COALESCE(position, '')) ~ '(section head|spv|supervisor)' THEN 3
+          WHEN LOWER(COALESCE(position, '')) ~ '(leader|koordinator)' THEN 4
+          ELSE 5
+        END ASC, department ASC, name ASC
+      `);
+    res.json(rows || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/notifications/wa-settings', async (req, res) => {
+  try {
+    const cfg = await getWaNotificationConfig();
+    res.json(cfg);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/notifications/wa-settings', async (req, res) => {
+  try {
+    const upsertSetting = async (key, val) => {
+      const strVal = String(val);
+      const existing = await db('settings').where({ section: 'ricoh', key }).first();
+      if (existing) {
+        await db('settings').where({ id: existing.id }).update({ value: strVal, updated_at: new Date() });
+      } else {
+        await db('settings').insert({
+          section: 'ricoh',
+          key,
+          value: strVal,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+      }
+    };
+
+    if (req.body?.enabled !== undefined) {
+      await upsertSetting('wa_quota_notifications_enabled', Boolean(req.body.enabled) ? 'true' : 'false');
+    }
+    if (req.body?.recipientMode && ['user_only', 'supervisor_only', 'both'].includes(req.body.recipientMode)) {
+      await upsertSetting('wa_quota_recipient_mode', req.body.recipientMode);
+    }
+    if (req.body?.exhaustedOnly !== undefined) {
+      await upsertSetting('wa_quota_exhausted_only', Boolean(req.body.exhaustedOnly) ? 'true' : 'false');
+    }
+
+    configService.invalidate();
+    const updatedCfg = await getWaNotificationConfig();
+    res.json({ success: true, ...updatedCfg });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/notifications/quota-warnings', async (req, res) => {
   try {
-    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || 'TCF-SG';
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
     const devices = await getDeviceQuotaStatuses(targetOrg);
-    const warnings = devices.filter(d => d.current_threshold >= 80);
+    const warnings = devices.filter(d => d.current_threshold >= 99);
     res.json({
       total_devices: devices.length,
       warning_count: warnings.length,
@@ -2031,7 +2824,7 @@ router.get('/notifications/quota-warnings', async (req, res) => {
 
 router.post('/notifications/quota-warnings/dispatch', async (req, res) => {
   try {
-    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || 'TCF-SG';
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
     const result = await checkAndDispatchAllQuotaWarnings(targetOrg);
     res.json({ success: true, ...result });
   } catch (err) {
@@ -2041,18 +2834,492 @@ router.post('/notifications/quota-warnings/dispatch', async (req, res) => {
 
 router.post('/notifications/quota-warnings/send-single/:id', async (req, res) => {
   try {
-    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || 'TCF-SG';
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const isTest = req.query.test === 'true' || req.body?.isTest === true || true; // default true for manual single trigger
     const devices = await getDeviceQuotaStatuses(targetOrg);
     const target = devices.find(d => String(d.id) === String(req.params.id));
     if (!target) return res.status(404).json({ error: 'Device not found' });
     
-    // Allow sending test notification even if threshold < 80
+    // Allow sending test notification even if threshold < 99
     if (!target.current_threshold) {
-      target.current_threshold = 80;
+      target.current_threshold = 99;
     }
-    const result = await sendQuotaWarning(target, targetOrg);
+    const result = await sendQuotaWarning(target, targetOrg, isTest);
     res.json({ success: true, target: target.computer_name, result });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// RICOH QUOTA REQUESTS (PENGAJUAN PENAMBAHAN KUOTA)
+// ==========================================
+
+// GET /api/ricoh/public-devices - List devices for public search autocomplete
+router.get('/public-devices', async (req, res) => {
+  try {
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const devices = await orgDb('ricoh_device_quotas')
+      .leftJoin('ricoh_departments', 'ricoh_device_quotas.department_id', 'ricoh_departments.id')
+      .leftJoin('assets', 'assets.id', orgDb.raw('COALESCE(ricoh_device_quotas.asset_id, (SELECT a2.id FROM assets a2 WHERE a2.name = ricoh_device_quotas.computer_name LIMIT 1))'))
+      .leftJoin('users', 'assets.user_id', 'users.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('assets.hr_employee_id', '=', 'hr.id').orOn('users.hr_employee_id', '=', 'hr.id');
+      })
+      .select(
+        'ricoh_device_quotas.id',
+        'ricoh_device_quotas.computer_name',
+        orgDb.raw("COALESCE(ricoh_departments.name, hr.department, users.department, 'General') as department_name"),
+        orgDb.raw("COALESCE(hr.name, users.name, assets.contact, 'User') as user_name")
+      )
+      .orderBy('ricoh_device_quotas.computer_name', 'asc');
+    res.json(devices);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ricoh/request-verify - Verify Device, PIN Ricoh, and NIK/Password
+router.post('/request-verify', async (req, res) => {
+  try {
+    const { computer_name, pin, password, organization } = req.body;
+    const targetOrg = organization || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+
+    if (!computer_name || !pin) {
+      return res.status(400).json({ error: 'Nama Komputer dan PIN Ricoh wajib diisi.' });
+    }
+
+    const cleanComp = computer_name.trim();
+    const cleanPin = pin.trim();
+    const cleanPass = (password || '').toString().trim().replace(/[\.,\s\-]/g, '');
+
+    const device = await orgDb('ricoh_device_quotas')
+      .leftJoin('assets', 'assets.id', orgDb.raw('COALESCE(ricoh_device_quotas.asset_id, (SELECT a2.id FROM assets a2 WHERE a2.name = ricoh_device_quotas.computer_name LIMIT 1))'))
+      .leftJoin('users', 'assets.user_id', 'users.id')
+      .leftJoin('hr_employees as hr', function() {
+        this.on('assets.hr_employee_id', '=', 'hr.id').orOn('users.hr_employee_id', '=', 'hr.id');
+      })
+      .leftJoin('ricoh_departments', 'ricoh_device_quotas.department_id', 'ricoh_departments.id')
+      .whereRaw('LOWER(TRIM(ricoh_device_quotas.computer_name)) = ?', [cleanComp.toLowerCase()])
+      .select(
+        'ricoh_device_quotas.*',
+        'assets.id as asset_id',
+        'assets.contact as asset_contact',
+        'users.id as user_id',
+        'users.password as user_password',
+        'hr.id as hr_id',
+        'hr.nik as hr_nik',
+        orgDb.raw("COALESCE(hr.phone, users.whatsapp, '') as resolved_phone"),
+        orgDb.raw("COALESCE(hr.name, users.name, assets.contact, 'User') as resolved_user_name"),
+        orgDb.raw("COALESCE(ricoh_departments.name, hr.department, users.department, 'General') as department_name")
+      )
+      .first();
+
+    if (!device) {
+      return res.status(404).json({ error: `Perangkat '${cleanComp}' tidak ditemukan dalam sistem Manajemen Kuota Ricoh.` });
+    }
+
+    // Verify PIN Ricoh (User Code)
+    const dbPin = (device.user_code || '').trim();
+    if (!dbPin || dbPin !== cleanPin) {
+      return res.status(401).json({ error: 'PIN Ricoh (User Code) salah atau tidak sesuai untuk perangkat ini.' });
+    }
+
+    // If password provided, verify against NIK or User password
+    if (cleanPass) {
+      const dbNikClean = (device.hr_nik || '').replace(/[\.,\s\-]/g, '').trim();
+      const dbUserPass = (device.user_password || '').trim();
+      const isNikMatch = dbNikClean && (cleanPass === dbNikClean);
+      const isPassMatch = dbUserPass && (cleanPass === dbUserPass.replace(/[\.,\s\-]/g, ''));
+
+      if (!isNikMatch && !isPassMatch) {
+        return res.status(401).json({ error: 'NIK / Password tidak cocok dengan pemegang perangkat ini.' });
+      }
+    }
+
+    const quotaBw = Number(device.monthly_quota_bw) || 0;
+    const usageBw = Number(device.current_usage_bw) || 0;
+    const quotaColor = Number(device.monthly_quota_color) || 0;
+    const usageColor = Number(device.current_usage_color) || 0;
+
+    const fbCopier = Number(device.monthly_quota_copier) || 0;
+    const quotaCopierBw = device.monthly_quota_copier_bw != null ? Number(device.monthly_quota_copier_bw) : Math.round(fbCopier * 0.8);
+    const quotaCopierColor = device.monthly_quota_copier_color != null ? Number(device.monthly_quota_copier_color) : Math.max(0, fbCopier - quotaCopierBw);
+    const usageCopierBw = Number(device.current_usage_copier_bw) || 0;
+    const usageCopierColor = Number(device.current_usage_copier_color) || 0;
+    const quotaCopier = quotaCopierBw + quotaCopierColor;
+    const usageCopier = usageCopierBw + usageCopierColor;
+
+    res.json({
+      verified: true,
+      device_id: device.id,
+      computer_name: device.computer_name,
+      department_name: device.department_name,
+      user_name: device.resolved_user_name,
+      user_phone: device.resolved_phone,
+      user_nik: device.hr_nik || '',
+      quota_bw: quotaBw,
+      usage_bw: usageBw,
+      remaining_bw: Math.max(0, quotaBw - usageBw),
+      quota_color: quotaColor,
+      usage_color: usageColor,
+      remaining_color: Math.max(0, quotaColor - usageColor),
+      quota_copier_bw: quotaCopierBw,
+      usage_copier_bw: usageCopierBw,
+      remaining_copier_bw: Math.max(0, quotaCopierBw - usageCopierBw),
+      quota_copier_color: quotaCopierColor,
+      usage_copier_color: usageCopierColor,
+      remaining_copier_color: Math.max(0, quotaCopierColor - usageCopierColor),
+      quota_copier: quotaCopier,
+      usage_copier: usageCopier,
+      remaining_copier: Math.max(0, quotaCopier - usageCopier)
+    });
+  } catch (err) {
+    console.error('[RICOH] Verify error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ricoh/request-submit - Submit Quota Request
+router.post('/request-submit', async (req, res) => {
+  try {
+    const {
+      device_id,
+      computer_name,
+      pin,
+      applicant_name,
+      applicant_nik,
+      applicant_phone,
+      request_type,
+      amount_bw,
+      amount_color,
+      amount_copier,
+      amount_copier_bw,
+      amount_copier_color,
+      reason,
+      organization
+    } = req.body;
+
+    const targetOrg = organization || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+
+    if (!computer_name || !pin || !applicant_name || !reason) {
+      return res.status(400).json({ error: 'Semua kolom wajib (Perangkat, PIN, Nama, Alasan) harus diisi.' });
+    }
+
+    // Verify PIN one more time
+    const device = await orgDb('ricoh_device_quotas')
+      .whereRaw('LOWER(TRIM(computer_name)) = ?', [computer_name.trim().toLowerCase()])
+      .first();
+
+    if (!device || (device.user_code || '').trim() !== pin.trim()) {
+      return res.status(401).json({ error: 'PIN Ricoh tidak valid.' });
+    }
+
+    const numBw = Math.max(0, parseInt(amount_bw) || 0);
+    const numColor = Math.max(0, parseInt(amount_color) || 0);
+    const numCopierBw = amount_copier_bw !== undefined ? Math.max(0, parseInt(amount_copier_bw) || 0) : Math.max(0, parseInt(amount_copier) || 0);
+    const numCopierColor = Math.max(0, parseInt(amount_copier_color) || 0);
+    const numCopierTotal = numCopierBw + numCopierColor;
+
+    if (numBw === 0 && numColor === 0 && numCopierTotal === 0) {
+      return res.status(400).json({ error: 'Jumlah penambahan kuota minimal harus lebih dari 0 lembar.' });
+    }
+
+    // Get department
+    const dept = await orgDb('ricoh_departments').where('id', device.department_id).first();
+    const deptName = dept?.name || 'General';
+
+    const [inserted] = await orgDb('ricoh_quota_requests').insert({
+      device_id: device.id,
+      computer_name: device.computer_name,
+      department_name: deptName,
+      user_code: pin.trim(),
+      applicant_name: applicant_name.trim(),
+      applicant_nik: (applicant_nik || '').trim(),
+      applicant_phone: (applicant_phone || '').trim(),
+      request_type: request_type || 'BW',
+      amount_bw: numBw,
+      amount_color: numColor,
+      amount_copier: numCopierTotal,
+      amount_copier_bw: numCopierBw,
+      amount_copier_color: numCopierColor,
+      reason: reason.trim(),
+      status: 'PENDING',
+      created_at: new Date(),
+      updated_at: new Date()
+    }).returning('*');
+
+    const requestId = typeof inserted === 'object' ? inserted.id : inserted;
+
+    // Dispatch WhatsApp Alert to ICT Helpdesk
+    const waPorts = [5002, 5003, 5004];
+    const axios = require('axios');
+    const helpdeskMsg = 
+      `📩 *[PENGAJUAN PENAMBAHAN KUOTA RICOH BARU]*\n\n` +
+      `👤 *Pemohon*: *${applicant_name.trim()}*\n` +
+      `🏢 *Departemen*: ${deptName}\n` +
+      `🖥️ *Perangkat*: \`${device.computer_name}\` (PIN: \`${pin.trim()}\`)\n` +
+      `📱 *No. WhatsApp*: ${applicant_phone || '-'}\n\n` +
+      `📊 *Rincian Tambahan Kuota yang Diajukan:*\n` +
+      (numBw > 0 ? `• 📄 Print B/W: *+${numBw} lembar*\n` : '') +
+      (numColor > 0 ? `• 🎨 Print Color: *+${numColor} lembar*\n` : '') +
+      (numCopierBw > 0 ? `• 📋 Copy B/W: *+${numCopierBw} lembar*\n` : '') +
+      (numCopierColor > 0 ? `• 🌈 Copy Color: *+${numCopierColor} lembar*\n` : '') +
+      `\n📝 *Alasan / Keperluan:*\n"${reason.trim()}"\n\n` +
+      `⏳ *Status*: *Menunggu Persetujuan Tim ICT*\n` +
+      `Silakan review dan setujui di Menu Manajemen Kuota Ricoh.`;
+
+    for (const port of waPorts) {
+      try {
+        await axios.post(`http://127.0.0.1:${port}/send-message`, {
+          to: 'GROUP:Tehnisi Helpdesk TCFSG',
+          message: helpdeskMsg,
+          shouldLog: false
+        }, { timeout: 4000 });
+        break;
+      } catch (e) {}
+    }
+
+    // Also send WA confirmation to applicant if phone number provided
+    if (applicant_phone) {
+      let cleanPhone = String(applicant_phone).replace(/[^0-9]/g, '');
+      if (cleanPhone.startsWith('08')) cleanPhone = '62' + cleanPhone.slice(1);
+      else if (cleanPhone.startsWith('8')) cleanPhone = '62' + cleanPhone;
+
+      if (cleanPhone.length >= 10) {
+        const userMsg = 
+          `Halo *${applicant_name.trim()}*,\n\n` +
+          `Pengajuan penambahan kuota Ricoh Anda untuk perangkat *${device.computer_name}* telah diterima oleh sistem dan sedang menunggu persetujuan Tim ICT.\n\n` +
+          `Rincian Pengajuan:\n` +
+          (numBw > 0 ? `• Print B/W: +${numBw} lembar\n` : '') +
+          (numColor > 0 ? `• Print Color: +${numColor} lembar\n` : '') +
+          (numCopierBw > 0 ? `• Copy B/W: +${numCopierBw} lembar\n` : '') +
+          (numCopierColor > 0 ? `• Copy Color: +${numCopierColor} lembar\n` : '') +
+          `\nAnda akan menerima notifikasi WhatsApp otomatis saat pengajuan telah disetujui. Terima kasih!`;
+
+        for (const port of waPorts) {
+          try {
+            await axios.post(`http://127.0.0.1:${port}/send-message`, {
+              to: cleanPhone,
+              message: userMsg,
+              shouldLog: false
+            }, { timeout: 4000 });
+            break;
+          } catch (e) {}
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Pengajuan penambahan kuota berhasil dikirim dan sedang menunggu persetujuan Tim ICT.',
+      request_id: requestId
+    });
+  } catch (err) {
+    console.error('[RICOH] Submit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ricoh/my-requests - Get quota requests for the current user/device
+router.get('/my-requests', async (req, res) => {
+  try {
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const { device_name, applicant_nik, applicant_name } = req.query;
+
+    let query = orgDb('ricoh_quota_requests').orderBy('id', 'desc').limit(20);
+
+    if (device_name || applicant_nik || applicant_name || (req.user && req.user.name)) {
+      query = query.where(function() {
+        if (device_name) {
+          this.orWhere('computer_name', 'ilike', `%${device_name.trim()}%`);
+        }
+        if (applicant_nik) {
+          const cleanNik = applicant_nik.trim().replace(/[\.,\s\-]/g, '');
+          this.orWhere('applicant_nik', 'ilike', `%${cleanNik}%`);
+        }
+        if (applicant_name) {
+          this.orWhere('applicant_name', 'ilike', `%${applicant_name.trim()}%`);
+        }
+        if (req.user && req.user.name) {
+          this.orWhere('applicant_name', 'ilike', `%${req.user.name.trim()}%`);
+        }
+      });
+    }
+
+    const requests = await query;
+    res.json(requests);
+  } catch (err) {
+    console.error('Error fetching my quota requests:', err);
+    res.status(500).json({ error: 'Gagal memuat riwayat pengajuan kuota.' });
+  }
+});
+
+// GET /api/ricoh/quota-requests - List Quota Requests for ICT Management
+router.get('/quota-requests', async (req, res) => {
+  try {
+    const targetOrg = req.query.org || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const { status } = req.query;
+
+    let query = orgDb('ricoh_quota_requests').orderBy('id', 'desc');
+    if (status && status !== 'ALL') {
+      query = query.where('status', status.toUpperCase());
+    }
+
+    const requests = await query;
+    res.json(requests);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ricoh/quota-requests/:id/approve - Approve Request
+router.post('/quota-requests/:id/approve', async (req, res) => {
+  try {
+    const targetOrg = req.body.organization || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const requestId = req.params.id;
+    const { admin_notes, approved_by } = req.body;
+
+    const request = await orgDb('ricoh_quota_requests').where('id', requestId).first();
+    if (!request) return res.status(404).json({ error: 'Pengajuan tidak ditemukan.' });
+    if (request.status !== 'PENDING') {
+      return res.status(400).json({ error: `Pengajuan ini sudah berstatus ${request.status}.` });
+    }
+
+    const adminName = approved_by || req.user?.name || 'ICT Admin';
+
+    // 1. Update ricoh_device_quotas
+    const device = await orgDb('ricoh_device_quotas').where('id', request.device_id).first();
+    const addCpyBw = request.amount_copier_bw != null ? Number(request.amount_copier_bw) : (Number(request.amount_copier) || 0);
+    const addCpyColor = Number(request.amount_copier_color) || 0;
+    if (device) {
+      const curCpyBw = device.monthly_quota_copier_bw != null ? Number(device.monthly_quota_copier_bw) : Math.round((Number(device.monthly_quota_copier) || 200) * 0.8);
+      const curCpyCol = device.monthly_quota_copier_color != null ? Number(device.monthly_quota_copier_color) : Math.max(0, (Number(device.monthly_quota_copier) || 200) - curCpyBw);
+      const nextCpyBw = curCpyBw + addCpyBw;
+      const nextCpyCol = curCpyCol + addCpyColor;
+      await orgDb('ricoh_device_quotas').where('id', device.id).update({
+        monthly_quota_bw: (Number(device.monthly_quota_bw) || 0) + (Number(request.amount_bw) || 0),
+        monthly_quota_color: (Number(device.monthly_quota_color) || 0) + (Number(request.amount_color) || 0),
+        monthly_quota_copier_bw: nextCpyBw,
+        monthly_quota_copier_color: nextCpyCol,
+        monthly_quota_copier: nextCpyBw + nextCpyCol,
+        status: 'active'
+      });
+
+      try {
+        const { checkAndEnforceCopierQuotas } = require('../services/ricoh_copier_lock');
+        checkAndEnforceCopierQuotas(targetOrg).catch(() => {});
+      } catch (e) {}
+    }
+
+    // 2. Update request status
+    await orgDb('ricoh_quota_requests').where('id', requestId).update({
+      status: 'APPROVED',
+      approved_by: adminName,
+      approved_at: new Date(),
+      admin_notes: admin_notes || null,
+      updated_at: new Date()
+    });
+
+    // 3. Dispatch WhatsApp Notification to Applicant
+    if (request.applicant_phone) {
+      let cleanPhone = String(request.applicant_phone).replace(/[^0-9]/g, '');
+      if (cleanPhone.startsWith('08')) cleanPhone = '62' + cleanPhone.slice(1);
+      else if (cleanPhone.startsWith('8')) cleanPhone = '62' + cleanPhone;
+
+      if (cleanPhone.length >= 10) {
+        const axios = require('axios');
+        const userMsg = 
+          `✅ *[PENGAJUAN KUOTA RICOH DISETUJUI]*\n\n` +
+          `Halo *${request.applicant_name}*,\n` +
+          `Pengajuan penambahan kuota Anda untuk perangkat *${request.computer_name}* telah *DISETUJUI* oleh Admin ICT (${adminName}).\n\n` +
+          `📊 *Tambahan Kuota Otomatis Aktif:*\n` +
+          (request.amount_bw > 0 ? `• 📄 Print B/W: *+${request.amount_bw} lembar*\n` : '') +
+          (request.amount_color > 0 ? `• 🎨 Print Color: *+${request.amount_color} lembar*\n` : '') +
+          (addCpyBw > 0 ? `• 📋 Copy B/W: *+${addCpyBw} lembar*\n` : '') +
+          (addCpyColor > 0 ? `• 🌈 Copy Color: *+${addCpyColor} lembar*\n` : '') +
+          `\nStatus perangkat dan fotokopi Anda telah aktif normal kembali. Silakan melanjutkan cetak di mesin Ricoh. Terima kasih!\n\n` +
+          `_Pusat Layanan Support Center & Asset ICT PT. Tri Centrum Fortuna_`;
+
+        const waPorts = [5002, 5003, 5004];
+        for (const port of waPorts) {
+          try {
+            await axios.post(`http://127.0.0.1:${port}/send-message`, {
+              to: cleanPhone,
+              message: userMsg,
+              shouldLog: false
+            }, { timeout: 4000 });
+            break;
+          } catch (e) {}
+        }
+      }
+    }
+
+    res.json({ success: true, message: 'Pengajuan berhasil disetujui dan kuota telah ditambahkan.' });
+  } catch (err) {
+    console.error('[RICOH] Approve error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ricoh/quota-requests/:id/reject - Reject Request
+router.post('/quota-requests/:id/reject', async (req, res) => {
+  try {
+    const targetOrg = req.body.organization || req.headers['x-organization'] || req.organization || (process.env.PLANT_CODE || 'TCF-KG');
+    const orgDb = db.getDb ? db.getDb(targetOrg) : db;
+    const requestId = req.params.id;
+    const { admin_notes, approved_by } = req.body;
+
+    const request = await orgDb('ricoh_quota_requests').where('id', requestId).first();
+    if (!request) return res.status(404).json({ error: 'Pengajuan tidak ditemukan.' });
+
+    const adminName = approved_by || req.user?.name || 'ICT Admin';
+
+    await orgDb('ricoh_quota_requests').where('id', requestId).update({
+      status: 'REJECTED',
+      approved_by: adminName,
+      approved_at: new Date(),
+      admin_notes: admin_notes || 'Ditolak oleh admin',
+      updated_at: new Date()
+    });
+
+    if (request.applicant_phone) {
+      let cleanPhone = String(request.applicant_phone).replace(/[^0-9]/g, '');
+      if (cleanPhone.startsWith('08')) cleanPhone = '62' + cleanPhone.slice(1);
+      else if (cleanPhone.startsWith('8')) cleanPhone = '62' + cleanPhone;
+
+      if (cleanPhone.length >= 10) {
+        const axios = require('axios');
+        const userMsg = 
+          `❌ *[PENGAJUAN KUOTA RICOH TIDAK DISETUJUI]*\n\n` +
+          `Halo *${request.applicant_name}*,\n` +
+          `Mohon maaf, pengajuan penambahan kuota Anda untuk perangkat *${request.computer_name}* belum dapat disetujui oleh Admin ICT.\n\n` +
+          `Catatan Admin: "${admin_notes || 'Tidak memenuhi kriteria penambahan'}"\n\n` +
+          `Silakan menghubungi Tim ICT jika ada kebutuhan operasional mendesak. Terima kasih.`;
+
+        const waPorts = [5002, 5003, 5004];
+        for (const port of waPorts) {
+          try {
+            await axios.post(`http://127.0.0.1:${port}/send-message`, {
+              to: cleanPhone,
+              message: userMsg,
+              shouldLog: false
+            }, { timeout: 4000 });
+            break;
+          } catch (e) {}
+        }
+      }
+    }
+
+    res.json({ success: true, message: 'Pengajuan telah ditolak.' });
+  } catch (err) {
+    console.error('[RICOH] Reject error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Calendar, ArrowLeft, Play, AlertTriangle, ChevronLeft, ChevronRight, CheckSquare, Printer, Monitor, Laptop, CheckCircle, Clock, Download } from 'lucide-react';
+import { Save, Calendar, ArrowLeft, Play, AlertTriangle, ChevronLeft, ChevronRight, CheckSquare, Printer, Monitor, Laptop, CheckCircle, Clock, Download, Check, Sparkles, Filter, ShieldCheck, CheckCheck, Camera } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import jsPDF from 'jspdf';
@@ -9,7 +9,13 @@ import { generatePrinterPdf } from '../utils/generatePrinterPdf';
 import { generateNetworkPdf } from '../utils/generateNetworkPdf';
 import { generateBackupPdf } from '../utils/generateBackupPdf';
 import { generatePhonePdf } from '../utils/generatePhonePdf';
+import { generateCctvPdf } from '../utils/generateCctvPdf';
 import logoTCF from '../assets/Logo_TCF_Sec_Processed.png';
+
+const isCctvAsset = (asset) => {
+    const cat = (asset?.category || '').toLowerCase();
+    return cat.includes('cctv') || cat.includes('camera');
+};
 
 const loadImage = (src) => {
     return new Promise((resolve) => {
@@ -22,20 +28,41 @@ const loadImage = (src) => {
 
 export default function MaintenanceSchedule() {
     const navigate = useNavigate();
-    const [year, setYear] = useState(new Date().getFullYear());
+    const [searchParams, setSearchParams] = useSearchParams();
     const currentMonthNum = new Date().getMonth() + 1;
     const initialSemester = currentMonthNum <= 6 ? 1 : 2;
-    const [semester, setSemester] = useState(initialSemester);
+    const [year, setYear] = useState(() => Number(searchParams.get('year')) || new Date().getFullYear());
+    const [semester, setSemester] = useState(() => {
+        const s = searchParams.get('semester');
+        if (s === 'all') return 'all';
+        return s ? Number(s) : initialSemester;
+    });
     const [schedule, setSchedule] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filterMyTasks, setFilterMyTasks] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState('All');
     const [currentUser, setCurrentUser] = useState(null);
-    const [searchParams, setSearchParams] = useSearchParams();
     const viewMode = searchParams.get('tab') || 'dashboard';
-    const setViewMode = (mode) => setSearchParams({ tab: mode });
+    const scopeMode = searchParams.get('scope') === 'cctv' ? 'cctv' : 'it';
+
+    const updateParams = (patch) => {
+        const next = new URLSearchParams(searchParams);
+        Object.entries(patch).forEach(([k, v]) => {
+            if (v === null || v === undefined || v === '') next.delete(k);
+            else next.set(k, String(v));
+        });
+        setSearchParams(next);
+    };
+
+    const setViewMode = (mode) => updateParams({ tab: mode });
+    const setScopeMode = (nextScope) => {
+        setCategoryFilter('All');
+        updateParams({ scope: nextScope });
+    };
+
     const [maintenanceType, setMaintenanceType] = useState('Semester'); // 'Daily', 'Weekly', 'Monthly', 'Semester'
     const [stats, setStats] = useState(null);
+    const [matrixMode, setMatrixMode] = useState('modern'); // 'modern' (single-row) or 'classic' (2-row SOP)
 
     useEffect(() => {
         if (viewMode === 'year') setMaintenanceType('Semester');
@@ -66,15 +93,21 @@ export default function MaintenanceSchedule() {
         fetchStats();
     }, [year, semester, maintenanceType]);
 
+    const itSchedule = React.useMemo(() => schedule.filter(item => !isCctvAsset(item.asset)), [schedule]);
+    const cctvSchedule = React.useMemo(() => schedule.filter(item => isCctvAsset(item.asset)), [schedule]);
+    const activeScopeSchedule = scopeMode === 'cctv' ? cctvSchedule : itSchedule;
+
     const categoryData = React.useMemo(() => {
         const counts = {};
-        schedule.forEach(item => {
-            const cat = (item.asset.category || 'OTHER').toUpperCase();
+        activeScopeSchedule.forEach(item => {
+            const cat = scopeMode === 'cctv'
+                ? (item.asset.user_department || item.asset.location || 'CCTV AREA').toUpperCase()
+                : (item.asset.category || 'OTHER').toUpperCase();
             if (!counts[cat]) counts[cat] = { name: cat, done: 0, pending: 0 };
-            
+
             let hasPlan = false;
             let isDone = false;
-            
+
             if (item.plan?.planning_data) {
                 Object.keys(item.plan.planning_data).forEach(key => {
                     hasPlan = true;
@@ -83,19 +116,19 @@ export default function MaintenanceSchedule() {
                     }
                 });
             }
-            
+
             if (hasPlan) {
                 if (isDone) counts[cat].done++;
                 else counts[cat].pending++;
             }
         });
         return Object.values(counts);
-    }, [schedule]);
+    }, [activeScopeSchedule, scopeMode]);
 
     const urgentTasks = React.useMemo(() => {
         const tasks = [];
         const currentMonth = new Date().getMonth() + 1; // 1-12
-        schedule.forEach(item => {
+        activeScopeSchedule.forEach(item => {
             if (item.plan?.planning_data) {
                 Object.keys(item.plan.planning_data).forEach(key => {
                     const isDone = item.plan.actual_data?.[key];
@@ -110,8 +143,8 @@ export default function MaintenanceSchedule() {
             }
         });
         tasks.sort((a, b) => a.month - b.month || a.week - b.week);
-        return tasks.slice(0, 10);
-    }, [schedule]);
+        return tasks.slice(0, 15);
+    }, [activeScopeSchedule]);
 
     const fetchStats = async () => {
         try {
@@ -193,7 +226,7 @@ export default function MaintenanceSchedule() {
             doc.text("PT. Tri Centrum Fortuna", 14, 38);
             
             doc.setFontSize(16);
-            doc.text("JADWAL PEMELIHARAAN PERANGKAT ICT", 14, 45);
+            doc.text(scopeMode === 'cctv' ? "JADWAL PEMELIHARAAN CCTV & SURVEILLANCE (NON-KPI)" : "JADWAL PEMELIHARAAN PERANGKAT ICT", 14, 45);
             
             doc.setFontSize(10);
             doc.setFont("helvetica", "normal");
@@ -381,9 +414,15 @@ export default function MaintenanceSchedule() {
         }
     };
 
-    const executePlan = async (asset, planId, mIdx, wIdx, isDone) => {
+    const executePlan = async (assetOrId, planId, mIdx, wIdx, isDone) => {
         const weekKey = `${mIdx}_${wIdx}`;
         const type = maintenanceType;
+        const assetId = typeof assetOrId === 'object' ? assetOrId?.id : assetOrId;
+        const asset = typeof assetOrId === 'object'
+            ? assetOrId
+            : (schedule.find(s => Number(s.asset?.id) === Number(assetId))?.asset || { id: assetId, category: '' });
+
+        const execUrl = `/ict/maintenance/execution/${asset.id}?planId=${planId || ''}&weekKey=${weekKey}&type=${type}&year=${year}&semester=${semester}&scope=${scopeMode}&returnTab=${viewMode}`;
 
         if (isDone) {
             try {
@@ -393,32 +432,36 @@ export default function MaintenanceSchedule() {
                     if (data) {
                         const form = {
                             ...data,
-                            checksheet_data: typeof data.checksheet_data === 'string' ? JSON.parse(data.checksheet_data) : data.checksheet_data
+                            checksheet_data: typeof data.checksheet_data === 'string' ? JSON.parse(data.checksheet_data || '{}') : (data.checksheet_data || {})
                         };
                         const cat = (asset.category || '').toLowerCase();
-                        if (cat.includes('computer') || cat.includes('laptop') || cat.includes('desktop') || cat.includes('pc') || cat.includes('notebook')) {
+                        if (cat.includes('cctv') || cat.includes('camera')) {
+                            await generateCctvPdf(asset, form, 'view');
+                            return;
+                        } else if (cat.includes('computer') || cat.includes('laptop') || cat.includes('desktop') || cat.includes('pc') || cat.includes('notebook')) {
                             await generatePCPdf(asset, form, 'view');
+                            return;
                         } else if (cat.includes('printer') || cat.includes('scanner')) {
                             await generatePrinterPdf(asset, form, 'view');
+                            return;
                         } else if (cat.includes('network') || cat.includes('switch') || cat.includes('router') || cat.includes('mikrotik') || cat.includes('cisco') || cat.includes('access point')) {
                             await generateNetworkPdf(asset, form, 'view');
+                            return;
                         } else if (cat.includes('server') || cat.includes('nas') || cat.includes('backup') || cat.includes('storage') || cat.includes('vm')) {
                             await generateBackupPdf(asset, form, 'view');
+                            return;
                         } else if (cat.includes('phone') || cat.includes('mobile') || cat.includes('tablet')) {
                             await generatePhonePdf(asset, form, 'view');
-                        } else {
-                            // Fallback generic PDF logic for other devices
-                            alert("Format PDF khusus untuk perangkat ini (" + (asset.category || 'Unknown') + ") belum tersedia. Silakan hubungi developer.");
-                            navigate(`/ict/maintenance/execution/${asset.id}?planId=${planId || ''}&weekKey=${weekKey}&type=${type}&mode=view`);
+                            return;
                         }
                     }
                 }
-            } catch(e) {
+            } catch (e) {
                 console.error("Failed to fetch record for PDF", e);
-                alert("Gagal menghasilkan PDF: " + e.message);
             }
+            navigate(`${execUrl}&mode=view`);
         } else {
-            navigate(`/ict/maintenance/execution/${asset.id}?planId=${planId || ''}&weekKey=${weekKey}&type=${type}`);
+            navigate(execUrl);
         }
     };
 
@@ -467,19 +510,20 @@ export default function MaintenanceSchedule() {
         monthHeaders.push({ name: currentMonth, colSpan });
     }
 
-    // Filter Logic
+    // Filter Logic strictly separated by scopeMode (IT KPI vs CCTV Non-KPI)
     let displayedSchedule = filterMyTasks
-        ? schedule.filter(item => item.asset.user_id === currentUser?.id)
-        : schedule;
+        ? activeScopeSchedule.filter(item => item.asset.user_id === currentUser?.id)
+        : activeScopeSchedule;
 
-    if (categoryFilter !== 'All') {
+    if (scopeMode !== 'cctv' && categoryFilter !== 'All') {
         displayedSchedule = displayedSchedule.filter(item => {
             const cat = (item.asset.category || '').toLowerCase();
-            if (categoryFilter === 'PC') return cat.includes('pc') || cat.includes('desktop');
+            if (categoryFilter === 'PC') return cat.includes('pc') || cat.includes('desktop') || cat.includes('computer');
             if (categoryFilter === 'Laptop') return cat.includes('laptop') || cat.includes('notebook');
             if (categoryFilter === 'Printer') return cat.includes('printer') || cat.includes('scanner');
             if (categoryFilter === 'Network') return cat.includes('network') || cat.includes('switch') || cat.includes('router') || cat.includes('access point') || cat.includes('mikrotik');
             if (categoryFilter === 'Server') return cat.includes('server') || cat.includes('nas') || cat.includes('storage') || cat.includes('backup');
+            if (categoryFilter === 'Phone') return cat.includes('phone') || cat.includes('mobile') || cat.includes('tablet');
             return true;
         });
     }
@@ -508,136 +552,370 @@ export default function MaintenanceSchedule() {
     };
 
     // Renders the Matrix Table (Year, Month views)
-    const renderTable = () => (
-        <div className="bg-white w-full mx-auto shadow-xl text-slate-800 overflow-hidden rounded-2xl border border-slate-200 mb-8 print:shadow-none print:m-0 print:rounded-none">
-            <div className="bg-gradient-to-r from-blue-700 to-blue-900 text-white p-4 flex items-center justify-between print:bg-white print:text-black print:border-2 print:border-slate-300 print:p-4 rounded-t-2xl print:rounded-none">
-                <div className="flex items-center space-x-4">
-                    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center p-2 shadow-lg ring-2 ring-white/30 print:shadow-none print:border print:border-slate-200">
-                        <img src="/infraforce-logo.png" alt="INFRAFORCE Logo" className="w-full h-full object-contain filter drop-shadow-md print:filter-none" />
+    const renderTable = () => {
+        // Calculate metrics for visible range
+        let totalPlanEvents = 0;
+        let totalDoneEvents = 0;
+        let totalOverdueEvents = 0;
+
+        displayedSchedule.forEach(item => {
+            visibleWeeks.forEach(w => {
+                const key = `${w.monthIndex}_${w.weekIndex}`;
+                const isPlanned = item.plan?.planning_data?.[key];
+                const isDone = item.plan?.actual_data?.[key];
+                if (isPlanned) totalPlanEvents++;
+                if (isDone) totalDoneEvents++;
+                if (isPlanned && !isDone && isOverdue(w.monthIndex, w.weekIndex, isPlanned, isDone)) {
+                    totalOverdueEvents++;
+                }
+            });
+        });
+
+        const donePct = totalPlanEvents > 0 ? Math.round((totalDoneEvents / totalPlanEvents) * 100) : 0;
+
+        return (
+            <div className="space-y-6">
+                {/* 1. Quick KPI Summary Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:hidden">
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                            <Monitor size={22} />
+                        </div>
+                        <div>
+                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Unit</div>
+                            <div className="text-xl font-black text-slate-800">{displayedSchedule.length} <span className="text-xs font-medium text-slate-400">Perangkat</span></div>
+                        </div>
                     </div>
-                    <div>
-                        <h2 className="font-bold text-2xl tracking-tight uppercase leading-none text-white">Jadwal Pemeliharaan</h2>
-                        <p className="text-blue-100 text-sm font-medium mt-1 tracking-widest uppercase print:text-slate-600">Perangkat ICT</p>
-                        <div className="mt-2 text-[10px] font-mono opacity-60 print:opacity-100 print:text-slate-500">No. Dokumen: TCFSG-FM-ICT-01-01</div>
+
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                            <Calendar size={22} />
+                        </div>
+                        <div>
+                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Target Rencana</div>
+                            <div className="text-xl font-black text-slate-800">{totalPlanEvents} <span className="text-xs font-medium text-slate-400">Plan</span></div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                            <CheckCircle size={22} />
+                        </div>
+                        <div>
+                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Realisasi Selesai</div>
+                            <div className="text-xl font-black text-emerald-600">{totalDoneEvents} <span className="text-xs font-bold text-emerald-500">({donePct}%)</span></div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${totalOverdueEvents > 0 ? 'bg-rose-50 text-rose-600 animate-pulse' : 'bg-slate-50 text-slate-400'}`}>
+                            <AlertTriangle size={22} />
+                        </div>
+                        <div>
+                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Jatuh Tempo</div>
+                            <div className={`text-xl font-black ${totalOverdueEvents > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
+                                {totalOverdueEvents} <span className="text-xs font-medium text-slate-400">Overdue</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div className="text-right">
-                    <div className="font-bold text-xl tracking-wide uppercase text-white">INFRAFORCE, PT. Tri Centrum Fortuna</div>
-                    <div className="text-base text-blue-100 mt-1 font-medium tracking-widest uppercase print:text-slate-700">Departemen : ICT</div>
-                    <div className="text-sm bg-black/20 px-3 py-1 rounded mt-2 inline-block border border-white/20 print:bg-slate-100 print:border-slate-300 print:text-slate-800 font-bold">
-                        Periode : {year} {semester === 'all' ? '(Full Year)' : `Semester ${semester}`} {viewMode === 'month' ? `- ${months[selectedMonth]}` : ''}
+
+                {/* 2. Main Matrix Card */}
+                <div className="bg-white w-full mx-auto shadow-sm text-slate-800 overflow-hidden rounded-2xl border border-slate-200 print:shadow-none print:m-0 print:rounded-none print:border-none">
+                    {/* Header Banner - Compact & Clean */}
+                    <div className="px-4 py-3 bg-slate-900 text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-3 print:bg-white print:text-black print:border-b-2 print:border-slate-800 print:p-3">
+                        <div className="flex items-center space-x-3">
+                            <div className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center p-1.5 backdrop-blur-sm border border-white/10 shrink-0 print:border-slate-300">
+                                <img src="/infraforce-logo.png" alt="INFRAFORCE" className="w-full h-full object-contain filter brightness-0 invert print:filter-none" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30 print:text-slate-600 print:border-slate-300">
+                                        {scopeMode === 'cctv' ? 'TCFSG-FM-ICT-CCTV' : 'TCFSG-FM-ICT-01-01'}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase">
+                                        {scopeMode === 'cctv' ? 'CCTV Surveillance • NON-KPI' : 'PT. Tri Centrum Fortuna • Dept ICT (KPI)'}
+                                    </span>
+                                </div>
+                                <h2 className="font-black text-base md:text-lg tracking-tight text-white mt-0.5">
+                                    {scopeMode === 'cctv' ? 'Jadwal Pemeliharaan Tahunan CCTV & Surveillance' : 'Jadwal Pemeliharaan Tahunan Perangkat ICT'}
+                                </h2>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-between md:justify-end">
+                            {/* Mode Toggle Switch */}
+                            <div className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-white/10 print:hidden text-xs">
+                                <button
+                                    onClick={() => setMatrixMode('modern')}
+                                    className={`px-2.5 py-1 rounded-md font-bold text-[10px] uppercase tracking-wider transition-all flex items-center gap-1 ${
+                                        matrixMode === 'modern'
+                                            ? 'bg-blue-600 text-white shadow-sm'
+                                            : 'text-slate-400 hover:text-white'
+                                    }`}
+                                >
+                                    <Sparkles size={11} />
+                                    <span>Ringkas (1 Baris)</span>
+                                </button>
+                                <button
+                                    onClick={() => setMatrixMode('classic')}
+                                    className={`px-2.5 py-1 rounded-md font-bold text-[10px] uppercase tracking-wider transition-all flex items-center gap-1 ${
+                                        matrixMode === 'classic'
+                                            ? 'bg-blue-600 text-white shadow-sm'
+                                            : 'text-slate-400 hover:text-white'
+                                    }`}
+                                >
+                                    <span>Format SOP (Plan/Act)</span>
+                                </button>
+                            </div>
+
+                            <div className="text-[11px] font-bold bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 text-slate-200">
+                                <span className="text-blue-300">{year} {semester === 'all' ? 'Full' : `Sem ${semester}`}</span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
 
-            <div className="overflow-x-auto print:overflow-visible">
-                <style dangerouslySetInnerHTML={{
-                    __html: `
-                    @media print {
-                        @page { size: A4 landscape; margin: 10mm; }
-                        body { background: white; }
-                        .print\\:hidden { display: none !important; }
-                        table { width: 100% !important; border-collapse: collapse !important; }
-                        th, td { border: 1px solid #333 !important; }
-                        .bg-blue-50 { background-color: #f0f7ff !important; }
-                        .text-blue-800 { color: #1e40af !important; }
-                        .bg-slate-100 { background-color: #f1f5f9 !important; }
-                    }
-                `}} />
-                <table className="w-full text-[10px] border-collapse border border-slate-300">
-                    <thead>
-                        <tr className="bg-slate-100 text-slate-700 border-b border-slate-300">
-                            <th className="p-1 border-r border-slate-300 w-[20px] font-bold text-center" uppercase tracking-widest>No</th>
-                            <th className="p-1 border-r border-slate-300 w-[100px] font-bold text-left" uppercase tracking-widest>Kode Inventaris</th>
-                            <th className="p-1 border-r border-slate-300 w-[50px] font-bold text-center" uppercase tracking-widest>Jenis</th>
-                            <th className="p-1 border-r border-slate-300 w-[70px] font-bold text-center" uppercase tracking-widest>Merk</th>
-                            <th className="p-1 border-r border-slate-300 w-[70px] font-bold text-left" uppercase tracking-widest>User</th>
-                            <th className="p-1 border-r border-slate-300 w-7 font-bold text-[9px] text-center" uppercase tracking-widest>Type</th>
+                    {/* Interactive Legend Bar */}
+                    <div className="px-4 py-2 bg-slate-50/80 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 print:hidden">
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className="font-bold text-slate-400 text-[9px] uppercase tracking-wider">Keterangan:</span>
+                            <div className="flex items-center gap-1 font-semibold text-slate-700">
+                                <span className="w-3 h-3 rounded bg-indigo-50 border border-indigo-300 flex items-center justify-center text-indigo-600 text-[7px] font-bold">●</span>
+                                <span>Plan</span>
+                            </div>
+                            <div className="flex items-center gap-1 font-semibold text-slate-700">
+                                <span className="w-3 h-3 rounded bg-emerald-500 text-white flex items-center justify-center text-[8px] font-bold">✓</span>
+                                <span>Selesai (Done)</span>
+                            </div>
+                            <div className="flex items-center gap-1 font-semibold text-slate-700">
+                                <span className="w-3 h-3 rounded bg-rose-50 border border-rose-300 text-rose-600 flex items-center justify-center text-[8px] font-bold">⚠</span>
+                                <span>Overdue</span>
+                            </div>
+                            <div className="flex items-center gap-1 font-semibold text-slate-400">
+                                <span className="w-3 h-3 rounded bg-white border border-slate-200 flex items-center justify-center text-[8px] text-slate-300">-</span>
+                                <span>Kosong</span>
+                            </div>
+                        </div>
 
-                            {monthHeaders.map((m, i) => (
-                                <th key={i} colSpan={m.colSpan} className="p-1 border-r border-slate-300 text-center bg-blue-50 text-blue-800 border-b border-slate-300 text-[9px] font-bold tracking-widest uppercase">{m.name}</th>
-                            ))}
-                        </tr>
-                        <tr className="bg-slate-50 border-b border-slate-300 text-slate-600">
-                            <th colSpan={6}></th>
-                            {visibleWeeks.map((w, i) => (
-                                <th key={i} className={`border-r border-slate-300 w-5 text-center text-[8px] font-bold ${w.weekIndex === 4 ? 'border-r-2 border-r-slate-400' : ''}`} uppercase tracking-widest>{w.label}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {displayedSchedule.map((item, idx) => (
-                            <React.Fragment key={item.asset.id}>
-                                <tr className="border-b border-slate-200 hover:bg-blue-50/50 transition-colors">
-                                    <td rowSpan={2} className="p-1 border-r border-slate-300 text-center">{idx + 1}</td>
-                                    <td rowSpan={2} className="p-1 border-r border-slate-300 font-bold text-slate-800 text-[9px] leading-tight">{item.asset.inventory_number || item.asset.name}</td>
-                                    <td rowSpan={2} className="p-1 border-r border-slate-300 text-center text-[9px]">{item.asset.category}</td>
-                                    <td rowSpan={2} className="p-1 border-r border-slate-300 text-center text-[9px] text-slate-500">{item.asset.manufacturer || '-'}</td>
-                                    <td rowSpan={2} className="p-1 border-r border-slate-300 truncate max-w-[90px] text-[9px] font-bold">{item.asset.user_name || '-'}</td>
-                                    <td className="p-0.5 border-r border-slate-300 font-bold bg-slate-50 text-slate-500 text-[8px] text-center h-5">Plan</td>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                            Klik ikon minggu untuk isi/lihat checksheet
+                        </div>
+                    </div>
 
-                                    {visibleWeeks.map((w, wIdx) => {
-                                        const key = `${w.monthIndex}_${w.weekIndex}`;
-                                        const isPlanned = item.plan?.planning_data?.[key];
-                                        return (
-                                            <td key={wIdx} className={`border-r border-slate-200 text-center p-0 h-5 ${isPlanned ? 'bg-blue-100 text-blue-600 font-bold' : ''} ${w.weekIndex === 4 ? 'border-r-2 border-r-slate-400' : ''}`}>
-                                                {isPlanned ? '●' : ''}
-                                            </td>
-                                        );
-                                    })}
+                    {/* Matrix Table — Fits 1 Desktop View (Jul - Dec without horizontal scroll) */}
+                    <div className="overflow-x-auto print:overflow-visible">
+                        <style dangerouslySetInnerHTML={{
+                            __html: `
+                            @media print {
+                                @page { size: A4 landscape; margin: 10mm; }
+                                body { background: white; }
+                                .print\\:hidden { display: none !important; }
+                                table { width: 100% !important; border-collapse: collapse !important; }
+                                th, td { border: 1px solid #333 !important; }
+                            }
+                        `}} />
+                        <table className="compact-matrix w-full text-[11px] border-collapse table-fixed">
+                            <thead>
+                                {/* Month Header Row */}
+                                <tr className="bg-slate-50 border-b border-slate-200 text-slate-700">
+                                    <th rowSpan={2} className="border-r border-slate-200 bg-slate-50 font-black text-[10px] text-left uppercase tracking-wider text-slate-700 w-[210px]">
+                                        Perangkat
+                                    </th>
+                                    <th rowSpan={2} className="border-r border-slate-200 bg-slate-50 font-black text-[10px] text-left uppercase tracking-wider text-slate-700 w-[145px]">
+                                        PIC / Lokasi
+                                    </th>
+                                    {matrixMode === 'classic' && (
+                                        <th rowSpan={2} className="border-r border-slate-200 w-[34px] font-black text-[9px] text-center uppercase text-slate-500 bg-slate-50">
+                                            Tipe
+                                        </th>
+                                    )}
+                                    {monthHeaders.map((m, i) => (
+                                        <th key={i} colSpan={m.colSpan} className="border-r border-slate-300 text-center bg-blue-50/70 text-blue-900 border-b border-slate-200 text-[10px] font-black tracking-wider uppercase py-1">
+                                            {m.name}
+                                        </th>
+                                    ))}
                                 </tr>
-                                <tr className="border-b border-slate-300">
-                                    <td className="p-0.5 border-r border-slate-300 font-bold text-slate-500 text-[8px] text-center h-5 uppercase tracking-widest bg-slate-50">Act</td>
-                                    {visibleWeeks.map((w, wIdx) => {
-                                        const key = `${w.monthIndex}_${w.weekIndex}`;
-                                        const isPlanned = item.plan?.planning_data?.[key];
-                                        const isDone = item.plan?.actual_data?.[key];
-                                        const overdue = !isDone && isOverdue(w.monthIndex, w.weekIndex, isPlanned, isDone);
+                                {/* Week Header Row */}
+                                <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500">
+                                    {visibleWeeks.map((w, i) => (
+                                        <th key={i} className={`border-r border-slate-100 text-center text-[9px] font-bold py-0.5 ${w.weekIndex === 4 ? 'border-r-2 border-r-slate-300' : ''}`}>
+                                            {w.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {matrixMode === 'modern' ? (
+                                    /* COMPACT SINGLE-LINE VIEW: 1 SLEEK ROW PER DEVICE */
+                                    displayedSchedule.map((item, idx) => (
+                                        <tr key={item.asset.id} className="border-b border-slate-100 hover:bg-blue-50/50 transition-colors h-8">
+                                            {/* Col 1: Perangkat & Kategori on ONE single line */}
+                                            <td className="border-r border-slate-200 bg-white overflow-hidden">
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                    <span className="w-5 h-5 rounded bg-slate-100 text-slate-500 flex items-center justify-center text-[9px] font-bold shrink-0">
+                                                        {idx + 1}
+                                                    </span>
+                                                    <span
+                                                        className="font-bold text-slate-800 text-[11px] truncate flex-1 min-w-0"
+                                                        title={`${item.asset.inventory_number || item.asset.name} (${item.asset.category || '-'} - ${item.asset.manufacturer || '-'})`}
+                                                    >
+                                                        {item.asset.inventory_number || item.asset.name}
+                                                    </span>
+                                                    <span className="px-1 py-0.2 rounded bg-slate-100 text-slate-500 text-[8px] font-bold shrink-0 uppercase">
+                                                        {(item.asset.category || '-').slice(0, 4)}
+                                                    </span>
+                                                </div>
+                                            </td>
 
-                                        return (
-                                            <td
-                                                key={wIdx}
-                                                className={`border-r border-slate-200 text-center p-0 h-5 relative group transition-colors
-                                                    ${isDone ? 'bg-green-500 text-white cursor-pointer hover:bg-green-600' :
-                                                        overdue ? 'bg-red-100 cursor-pointer hover:bg-red-200' :
-                                                            isPlanned ? 'bg-transparent hover:bg-green-50 cursor-pointer text-slate-400 hover:text-green-600' : ''}
-                                                    ${w.weekIndex === 4 ? 'border-r-2 border-r-slate-400' : ''}
-                                                `}
-                                                onClick={() => executePlan(item.asset, item.plan?.id, w.monthIndex, w.weekIndex, isDone)}
-                                            >
-                                                {isDone && '✓'}
-                                                {overdue && <div className="absolute inset-0 flex items-center justify-center"><AlertTriangle size={8} className="text-red-500 animate-pulse" /></div>}
-                                                {!isDone && (isPlanned || overdue) && (
-                                                    <div className="hidden group-hover:flex absolute inset-0 items-center justify-center bg-green-100 text-green-600">
-                                                        <Play size={8} fill="currentColor" />
+                                            {/* Col 2: PIC & Dept/Lokasi on ONE single line */}
+                                            <td className="border-r border-slate-200 bg-white overflow-hidden">
+                                                <div
+                                                    className="text-[10px] font-semibold text-slate-700 truncate"
+                                                    title={`${item.asset.user_name || item.asset.contact || '-'} — ${item.asset.user_department || item.asset.location || 'General'}`}
+                                                >
+                                                    {scopeMode === 'cctv'
+                                                        ? (item.asset.location || item.asset.user_department || item.asset.user_name || '-')
+                                                        : `${item.asset.user_name || item.asset.contact || '-'}${item.asset.user_department ? ` (${item.asset.user_department})` : ''}`}
+                                                </div>
+                                            </td>
+
+                                            {/* Matrix Week Cells */}
+                                            {visibleWeeks.map((w, wIdx) => {
+                                                const key = `${w.monthIndex}_${w.weekIndex}`;
+                                                const isPlanned = item.plan?.planning_data?.[key];
+                                                const isDone = item.plan?.actual_data?.[key];
+                                                const overdue = !isDone && isOverdue(w.monthIndex, w.weekIndex, isPlanned, isDone);
+                                                const isMonthEnd = w.weekIndex === 4;
+
+                                                return (
+                                                    <td
+                                                        key={wIdx}
+                                                        className={`text-center border-r border-slate-100 ${isMonthEnd ? 'border-r-2 border-r-slate-300' : ''}`}
+                                                    >
+                                                        {isDone ? (
+                                                            <button
+                                                                onClick={() => executePlan(item.asset, item.plan?.id, w.monthIndex, w.weekIndex, isDone)}
+                                                                className="w-[18px] h-[18px] mx-auto rounded bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center shadow-sm hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                                                                title={`M${w.weekIndex} ${w.monthName}: Selesai • Klik untuk lihat checksheet`}
+                                                            >
+                                                                <Check size={11} className="stroke-[3]" />
+                                                            </button>
+                                                        ) : overdue ? (
+                                                            <button
+                                                                onClick={() => executePlan(item.asset, item.plan?.id, w.monthIndex, w.weekIndex, isDone)}
+                                                                className="w-[18px] h-[18px] mx-auto rounded bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-600 flex items-center justify-center hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                                                                title={`M${w.weekIndex} ${w.monthName}: Terlambat! • Klik untuk kerjakan checksheet`}
+                                                            >
+                                                                <AlertTriangle size={10} className="stroke-[2.5]" />
+                                                            </button>
+                                                        ) : isPlanned ? (
+                                                            <button
+                                                                onClick={() => executePlan(item.asset, item.plan?.id, w.monthIndex, w.weekIndex, isDone)}
+                                                                className="w-[18px] h-[18px] mx-auto rounded bg-indigo-50/90 hover:bg-indigo-600 border border-indigo-200 hover:border-indigo-600 text-indigo-600 hover:text-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all cursor-pointer group/cell"
+                                                                title={`M${w.weekIndex} ${w.monthName}: Terjadwal (Plan) • Klik untuk isi checksheet`}
+                                                            >
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 group-hover/cell:hidden"></span>
+                                                                <Play size={8} fill="currentColor" className="hidden group-hover/cell:block ml-0.5" />
+                                                            </button>
+                                                        ) : (
+                                                            <span className="text-slate-200 text-[10px] select-none">·</span>
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))
+                                ) : (
+                                    /* CLASSIC SOP VIEW: COMPACT 2 ROWS (Plan & Act) */
+                                    displayedSchedule.map((item, idx) => (
+                                        <React.Fragment key={item.asset.id}>
+                                            {/* Row 1: Plan */}
+                                            <tr className="border-b border-slate-100 hover:bg-blue-50/30 transition-colors h-6">
+                                                <td rowSpan={2} className="border-r border-slate-200 bg-white overflow-hidden">
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <span className="w-5 h-5 rounded bg-slate-100 text-slate-500 flex items-center justify-center text-[9px] font-bold shrink-0">
+                                                            {idx + 1}
+                                                        </span>
+                                                        <span className="font-bold text-slate-800 text-[11px] truncate flex-1 min-w-0" title={item.asset.inventory_number || item.asset.name}>
+                                                            {item.asset.inventory_number || item.asset.name}
+                                                        </span>
                                                     </div>
-                                                )}
-                                            </td>
-                                        );
-                                    })}
-                                </tr>
-                            </React.Fragment>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+                                                </td>
+                                                <td rowSpan={2} className="border-r border-slate-200 bg-white overflow-hidden">
+                                                    <div className="text-[10px] font-semibold text-slate-700 truncate" title={`${item.asset.user_name || item.asset.contact || '-'} — ${item.asset.user_department || item.asset.location || 'General'}`}>
+                                                        {scopeMode === 'cctv'
+                                                            ? (item.asset.location || item.asset.user_department || '-')
+                                                            : (item.asset.user_name || item.asset.contact || '-')}
+                                                    </div>
+                                                </td>
+                                                <td className="border-r border-slate-200 font-black text-[8px] uppercase text-indigo-600 bg-indigo-50/30 text-center">
+                                                    Plan
+                                                </td>
 
-            <div className="hidden print:grid grid-cols-3 gap-5 p-12 mt-8 text-center text-sm font-bold">
-                <div>
-                    <p className="mb-20">Dibuat Oleh,</p>
-                    <p className="border-t border-black pt-2 inline-block px-8">ICT Staff</p>
-                </div>
-                <div>
-                    <p className="mb-20">Diketahui Oleh,</p>
-                    <p className="border-t border-black pt-2 inline-block px-8">ICT Manager</p>
-                </div>
-                <div>
-                    <p className="mb-20">Disetujui Oleh,</p>
-                    <p className="border-t border-black pt-2 inline-block px-8">General Manager</p>
+                                                {visibleWeeks.map((w, wIdx) => {
+                                                    const key = `${w.monthIndex}_${w.weekIndex}`;
+                                                    const isPlanned = item.plan?.planning_data?.[key];
+                                                    const isMonthEnd = w.weekIndex === 4;
+                                                    return (
+                                                        <td key={wIdx} className={`border-r border-slate-100 text-center text-[10px] ${isPlanned ? 'bg-indigo-50 font-bold text-indigo-600' : ''} ${isMonthEnd ? 'border-r-2 border-r-slate-300' : ''}`}>
+                                                            {isPlanned ? '●' : ''}
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                            {/* Row 2: Act */}
+                                            <tr className="border-b border-slate-200 h-6">
+                                                <td className="border-r border-slate-200 font-black text-[8px] uppercase text-emerald-600 bg-emerald-50/30 text-center">
+                                                    Act
+                                                </td>
+                                                {visibleWeeks.map((w, wIdx) => {
+                                                    const key = `${w.monthIndex}_${w.weekIndex}`;
+                                                    const isPlanned = item.plan?.planning_data?.[key];
+                                                    const isDone = item.plan?.actual_data?.[key];
+                                                    const overdue = !isDone && isOverdue(w.monthIndex, w.weekIndex, isPlanned, isDone);
+                                                    const isMonthEnd = w.weekIndex === 4;
+
+                                                    return (
+                                                        <td
+                                                            key={wIdx}
+                                                            className={`border-r border-slate-100 text-center cursor-pointer transition-colors ${isMonthEnd ? 'border-r-2 border-r-slate-300' : ''}`}
+                                                            onClick={() => executePlan(item.asset, item.plan?.id, w.monthIndex, w.weekIndex, isDone)}
+                                                        >
+                                                            {isDone ? (
+                                                                <span className="inline-block w-3.5 h-3.5 rounded bg-emerald-500 text-white font-bold text-[9px] leading-[14px]">✓</span>
+                                                            ) : overdue ? (
+                                                                <span className="inline-block w-3.5 h-3.5 rounded bg-rose-100 text-rose-600 font-bold text-[9px] leading-[14px]">⚠</span>
+                                                            ) : ''}
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        </React.Fragment>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Print Signatures Block */}
+                    <div className="hidden print:grid grid-cols-3 gap-5 p-12 mt-8 text-center text-sm font-bold">
+                        <div>
+                            <p className="mb-20">Dibuat Oleh,</p>
+                            <p className="border-t border-black pt-2 inline-block px-8">ICT Staff</p>
+                        </div>
+                        <div>
+                            <p className="mb-20">Diketahui Oleh,</p>
+                            <p className="border-t border-black pt-2 inline-block px-8">ICT Manager</p>
+                        </div>
+                        <div>
+                            <p className="mb-20">Disetujui Oleh,</p>
+                            <p className="border-t border-black pt-2 inline-block px-8">General Manager</p>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     const updateCondition = async (assetId, weekKey, value) => {
         try {
@@ -912,7 +1190,7 @@ export default function MaintenanceSchedule() {
                             </div>
                             <div className="flex flex-col gap-2">
                                 <button
-                                    onClick={() => executePlan(item.asset.id, item.plan?.id, currentMonthIdx, currentWeekIdx, isDone)}
+                                    onClick={() => executePlan(item.asset, item.plan?.id, currentMonthIdx, currentWeekIdx, isDone)}
                                     className={`px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center transition-all ${isDone ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.4)]'}`}
                                 >
                                     {isDone ? 'Done' : 'Execute'}
@@ -942,37 +1220,115 @@ export default function MaintenanceSchedule() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                    {/* Scope Separation Toggle: IT Assets (KPI) vs CCTV Surveillance (Non-KPI) */}
                     <div className="flex p-1 bg-white rounded-2xl border border-[#E1E1E1] shadow-sm">
-                        <button onClick={() => setViewMode('dashboard')} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Dashboard</button>
-                        <button onClick={() => { setViewMode('day'); setMaintenanceType('Daily'); }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'day' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Daily</button>
-                        <button onClick={() => { setViewMode('week'); setMaintenanceType('Weekly'); }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'week' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Weekly</button>
-                        <button onClick={() => { setViewMode('month'); setMaintenanceType('Monthly'); }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'month' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Monthly</button>
-                        <button onClick={() => { setViewMode('year'); setMaintenanceType('Semester'); }} className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'year' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Yearly</button>
+                        <button
+                            onClick={() => setScopeMode('it')}
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${scopeMode === 'it' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-900'}`}
+                        >
+                            <Monitor size={13} />
+                            <span>IT Assets (KPI)</span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] ${scopeMode === 'it' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>{itSchedule.length}</span>
+                        </button>
+                        <button
+                            onClick={() => setScopeMode('cctv')}
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${scopeMode === 'cctv' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-900'}`}
+                        >
+                            <Camera size={13} />
+                            <span>CCTV (Non-KPI)</span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] ${scopeMode === 'cctv' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>{cctvSchedule.length}</span>
+                        </button>
+                    </div>
+
+                    <div className="flex p-1 bg-white rounded-2xl border border-[#E1E1E1] shadow-sm">
+                        <button onClick={() => setViewMode('dashboard')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'dashboard' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Dashboard</button>
+                        <button onClick={() => { setViewMode('day'); setMaintenanceType('Daily'); }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'day' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Daily</button>
+                        <button onClick={() => { setViewMode('week'); setMaintenanceType('Weekly'); }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'week' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Weekly</button>
+                        <button onClick={() => { setViewMode('month'); setMaintenanceType('Monthly'); }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'month' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Monthly</button>
+                        <button onClick={() => { setViewMode('year'); setMaintenanceType('Semester'); }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'year' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-900'}`}>Yearly</button>
                     </div>
                 </div>
             </div>
 
             {/* Sub-Filters */}
-            {viewMode !== 'dashboard' && (
+            {viewMode !== 'dashboard' && scopeMode !== 'cctv' && (
                 <div className="flex flex-col sm:flex-row gap-4 print:hidden">
                     <select 
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         className="bg-white border border-[#E1E1E1] text-slate-700 text-xs font-black uppercase tracking-widest rounded-xl px-4 py-3 outline-none focus:ring-4 focus:ring-blue-600/5 focus:border-blue-600 transition-all shadow-sm"
                     >
-                        <option value="All">All Categories</option>
+                        <option value="All">All IT Categories (Excl. CCTV)</option>
                         <option value="PC">PC / Desktop</option>
                         <option value="Laptop">Laptop / Notebook</option>
                         <option value="Printer">Printer & Scanner</option>
                         <option value="Network">Network Devices</option>
                         <option value="Server">Servers & Storage</option>
+                        <option value="Phone">Smartphone & Tablet</option>
                     </select>
                 </div>
             )}
 
+            {/* Non-KPI Separation Banner when viewing CCTV */}
+            {scopeMode === 'cctv' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center justify-between gap-3 print:hidden">
+                    <div className="flex items-center gap-3">
+                        <Camera size={18} className="text-amber-600 shrink-0" />
+                        <p className="text-xs font-bold text-amber-900">
+                            Mode Pemeliharaan <span className="uppercase font-black">CCTV Surveillance (Non-KPI)</span> — Data kamera CCTV dipisahkan agar tidak mempengaruhi perhitungan target & pencapaian KPI ICT.
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* Top Statistics Section */}
-            {stats && viewMode === 'dashboard' && (
+            {stats && viewMode === 'dashboard' && scopeMode === 'cctv' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 print:hidden">
+                    <div className="card-unifi p-5 flex items-center justify-between shadow-sm">
+                        <div>
+                            <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-2">Total Unit CCTV</p>
+                            <h3 className="text-4xl font-black text-slate-900 tracking-tighter">{stats?.cctv?.total ?? cctvSchedule.length}</h3>
+                        </div>
+                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center border bg-amber-50 border-amber-100 text-amber-600 shadow-sm">
+                            <Camera size={24} />
+                        </div>
+                    </div>
+                    <div className="card-unifi p-5 flex items-center justify-between shadow-sm">
+                        <div>
+                            <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-2">Sudah Maintenance</p>
+                            <h3 className="text-4xl font-black text-emerald-600 tracking-tighter">{stats?.cctv?.done ?? 0}</h3>
+                        </div>
+                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center border bg-emerald-50 border-emerald-100 text-emerald-600 shadow-sm">
+                            <CheckCircle size={24} />
+                        </div>
+                    </div>
+                    <div className="card-unifi p-5 flex items-center justify-between shadow-sm">
+                        <div>
+                            <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-2">Belum Maintenance</p>
+                            <h3 className="text-4xl font-black text-orange-500 tracking-tighter">{stats?.cctv?.pending ?? 0}</h3>
+                        </div>
+                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center border bg-orange-50 border-orange-100 text-orange-500 shadow-sm">
+                            <Clock size={24} />
+                        </div>
+                    </div>
+                    <div className="p-5 rounded-[2rem] bg-slate-900 text-white flex flex-col justify-between shadow-xl">
+                        <div>
+                            <div className="flex items-center gap-2 text-amber-400 mb-2">
+                                <Camera size={14} />
+                                <span className="text-[10px] font-black uppercase tracking-widest">CCTV Progress (Non-KPI)</span>
+                            </div>
+                            <h3 className="text-4xl font-black tracking-tighter text-white uppercase">{stats?.cctv?.percentage ?? 0}%</h3>
+                        </div>
+                        <div className="pt-4 border-t border-white/10 flex justify-between items-center">
+                            <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">{stats?.cctv?.done ?? 0} Finished</span>
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{stats?.cctv?.pending ?? 0} Remaining</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {stats && viewMode === 'dashboard' && scopeMode === 'it' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 print:hidden">
                     <div className="card-unifi p-5 flex items-center justify-between group hover:border-blue-600/30 transition-all shadow-sm">
                         <div>
@@ -1089,10 +1445,10 @@ export default function MaintenanceSchedule() {
                         </h3>
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2" style={{ scrollbarWidth: 'thin' }}>
                             {urgentTasks.length > 0 ? urgentTasks.map((task, i) => (
-                                <div key={i} className="p-4 bg-orange-50 rounded-2xl border border-orange-100 flex justify-between items-center group cursor-pointer hover:bg-orange-100 transition-colors" onClick={() => executePlan(task.asset.id, task.plan?.id, task.month, task.week, false)}>
+                                <div key={i} className="p-4 bg-orange-50 rounded-2xl border border-orange-100 flex justify-between items-center group cursor-pointer hover:bg-orange-100 transition-colors" onClick={() => executePlan(task.asset, task.plan?.id, task.month, task.week, false)}>
                                     <div>
-                                        <div className="text-sm font-bold text-slate-900">{task.asset.name}</div>
-                                        <div className="text-[10px] font-black uppercase text-orange-600 tracking-widest mt-1">Month {task.month} • Week {task.week}</div>
+                                        <div className="text-sm font-bold text-slate-900">{task.asset.inventory_number || task.asset.name}</div>
+                                        <div className="text-[10px] font-black uppercase text-orange-600 tracking-widest mt-1">{task.asset.category} • Month {task.month} • Week {task.week}</div>
                                     </div>
                                     <ChevronRight size={18} className="text-orange-300 group-hover:text-orange-600 transition-colors" />
                                 </div>
@@ -1219,7 +1575,7 @@ export default function MaintenanceSchedule() {
                                                 <span className="text-xs font-bold text-slate-700">{item.asset.user_name || 'Generic Node'}</span>
                                             </div>
                                             <button
-                                                onClick={() => executePlan(item.asset.id, item.plan?.id, currentMonthIdx, currentWeekIdx, !!item.plan?.actual_data?.[weekKey])}
+                                                onClick={() => executePlan(item.asset, item.plan?.id, currentMonthIdx, currentWeekIdx, !!item.plan?.actual_data?.[weekKey])}
                                                 className={`p-3 rounded-xl transition-all ${isDone ? 'text-emerald-500 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100' : 'text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white border border-blue-100 shadow-sm'}`}
                                             >
                                                 {isDone ? <CheckCircle size={18} /> : <Play size={18} fill="currentColor" />}

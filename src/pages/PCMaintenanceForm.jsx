@@ -194,8 +194,14 @@ export default function PCMaintenanceForm({ asset, formData: propFormData, onCha
                 setStatus('Done');
                 alert('Approved by Section Head! Maintenance Complete.');
                 // Update schedule status to Done in mock DB
-                if (onSubmit) onSubmit(dataToSubmit);
-                navigate('/ict/maintenance');
+                if (onSubmit) {
+                    onSubmit(dataToSubmit);
+                } else {
+                    const sp = new URLSearchParams(window.location.search);
+                    const retTab = sp.get('returnTab') || 'year';
+                    const retScope = sp.get('scope') ? `&scope=${sp.get('scope')}` : '';
+                    navigate(`/ict/maintenance?tab=${retTab}${retScope}`);
+                }
             }
         }, 500);
     };

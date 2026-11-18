@@ -7,30 +7,21 @@ export default function InfraGuard() {
     const isSuperAdmin = user && ['super_user', 'superuser', 'administrator', 'admin'].includes(user.role?.toLowerCase());
     const userOrg = user?.organization || 'TCF-SG';
 
-    const [currentOrg, setCurrentOrg] = useState(() => {
-        return isSuperAdmin 
-            ? (sessionStorage.getItem('organization') || userOrg)
-            : userOrg;
-    });
+    const currentOrg = 'TCF-SG';
     const [ssoUrl, setSsoUrl] = useState("http://192.168.1.3/login/infra");
     const location = useLocation();
-
-    const handlePlantSwitch = (newOrg) => {
-        if (!isSuperAdmin) return;
-        sessionStorage.setItem('organization', newOrg);
-        setCurrentOrg(newOrg);
-        if (user) {
-            user.organization = newOrg;
-            sessionStorage.setItem('user', JSON.stringify(user));
-        }
-    };
 
     useEffect(() => {
         try {
             const userStr = sessionStorage.getItem('user');
             if (userStr) {
-                // Parse and elevate role for SSO to bypass login
+                // Parse and check admin role before elevating for SSO
                 const userObj = JSON.parse(userStr);
+                const role = (userObj.role || '').toLowerCase();
+                const isIctAdmin = ['super_user', 'superuser', 'administrator', 'admin'].includes(role) || role.startsWith('ict');
+                if (!isIctAdmin) {
+                    return;
+                }
                 userObj.role = 'administrator'; // Force admin to be recognized as superadmin by Infra Guard
                 userObj.organization = currentOrg;
                 userObj.plant = currentOrg.toUpperCase().includes('KG') ? 'KG' : 'SG';
@@ -84,28 +75,10 @@ export default function InfraGuard() {
                     </span>
                 </div>
                 <div className="flex items-center gap-2">
-                    {isSuperAdmin ? (
-                        <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-700">
-                            <button
-                                onClick={() => handlePlantSwitch('TCF-SG')}
-                                className={`px-3 py-1 rounded-md font-bold transition-all ${!isKG ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
-                            >
-                                Plant SG (Sadang)
-                            </button>
-                            <button
-                                onClick={() => handlePlantSwitch('TCF-KG')}
-                                className={`px-3 py-1 rounded-md font-bold transition-all ${isKG ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'}`}
-                            >
-                                Plant KG (Karawang)
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="flex items-center gap-1.5 bg-slate-900 px-3 py-1 rounded-lg border border-slate-700 text-xs font-bold text-slate-300" title="Plant terkunci sesuai hak akses user">
-                            <span className={`w-2 h-2 rounded-full ${isKG ? 'bg-amber-400' : 'bg-indigo-400'}`} />
-                            <span>{isKG ? 'Plant KG (Karawang)' : 'Plant SG (Sadang)'}</span>
-                            <span className="text-[10px] text-slate-500 font-normal ml-1">🔒 Locked</span>
-                        </div>
-                    )}
+                    <div className="flex items-center gap-1.5 bg-slate-900 px-3 py-1 rounded-lg border border-slate-700 text-xs font-bold text-slate-300" title="Server 66 - Plant Sadang (SG)">
+                        <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                        <span>Plant SG (Sadang)</span>
+                    </div>
 
                     <a
                         href={ssoUrl}

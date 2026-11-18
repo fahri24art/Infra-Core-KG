@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import ActivityPlanSection from './ActivityPlanSection';
+import CostReductionSection from './CostReductionSection';
 import { generateDeptBudgetRequestPdf } from '../../utils/generateDeptBudgetRequestPdf';
 import { exportDeptBudgetExcel, exportDeptBudgetRekapExcel } from '../../utils/generateDeptBudgetRequestExcel';
 
@@ -122,6 +123,7 @@ export default function BudgetingCenter({ defaultSection }) {
                 if (t === 'software') return 'SOFTWARE_LIFECYCLE';
                 if (t === 'iso') return 'ISO_STANDARDS';
                 if (t === 'requests' || t === 'dept') return 'DEPT_REQUESTS';
+                if (t === 'cr' || t === 'cost-reduction' || t === 'saving') return 'COST_REDUCTION';
             } catch (e) {}
         }
         return 'BUDGET_GRID';
@@ -135,6 +137,7 @@ export default function BudgetingCenter({ defaultSection }) {
             try {
                 const u = new URL(window.location.href);
                 if (sec === 'ACTIVITY_PLAN') u.searchParams.set('tab', 'activity');
+                else if (sec === 'COST_REDUCTION') u.searchParams.set('tab', 'cr');
                 else if (sec === 'HARDWARE_LIFECYCLE') u.searchParams.set('tab', 'hardware');
                 else if (sec === 'SOFTWARE_LIFECYCLE') u.searchParams.set('tab', 'software');
                 else if (sec === 'ISO_STANDARDS') u.searchParams.set('tab', 'iso');
@@ -1238,6 +1241,19 @@ export default function BudgetingCenter({ defaultSection }) {
                     </button>
 
                     <button
+                        id="tab-btn-cost-reduction"
+                        onClick={() => switchSection('COST_REDUCTION')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                            mainSection === 'COST_REDUCTION'
+                                ? 'bg-teal-500 text-slate-950 font-black shadow-md shadow-teal-500/30'
+                                : 'text-slate-300 hover:text-white hover:bg-white/10'
+                        }`}
+                    >
+                        <TrendingDown size={15} className={mainSection === 'COST_REDUCTION' ? 'text-slate-950' : 'text-teal-400'} />
+                        <span>Cost Reduction (CR)</span>
+                    </button>
+
+                    <button
                         id="tab-btn-hardware-lifecycle"
                         onClick={() => switchSection('HARDWARE_LIFECYCLE')}
                         className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
@@ -1304,6 +1320,16 @@ export default function BudgetingCenter({ defaultSection }) {
                     defaultPlant={defaultPlant}
                     formatIDR={formatIDR}
                     onBudgetSyncSuccess={fetchData}
+                />
+            )}
+
+            {/* SECTION: COST REDUCTION (CR) ICT */}
+            {mainSection === 'COST_REDUCTION' && (
+                <CostReductionSection
+                    year={year}
+                    selectedPlant={selectedPlant}
+                    defaultPlant={defaultPlant}
+                    formatIDR={formatIDR}
                 />
             )}
 

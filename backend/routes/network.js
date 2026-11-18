@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const mikrotik = require('../services/mikrotik');
 const db = require('../db');
+const { computeMonthlyUptimeFromTickets, getMonthWindowWIB } = require('../utils/kpiTime');
 
 // Middleware to load config
 const loadConfig = async (req, res, next) => {
@@ -212,61 +213,72 @@ router.get('/history', async (req, res) => {
     }
 });
 
-// GET /api/network/uptime-monthly?year=2025&type=uptime
+async function fetchYearIncidentContext(activeDb, year) {
+    const startYearIso = new Date(Date.UTC(year - 1, 11, 1, 0, 0, 0)).toISOString();
+    const endYearIso = new Date(Date.UTC(year + 1, 0, 2, 0, 0, 0)).toISOString();
+
+    const tickets = await activeDb('tickets')
+        .where('created_at', '>=', startYearIso)
+        .where('created_at', '<', endYearIso)
+        .where(function () {
+            this.where('number', 'like', '%-IR-%')
+                .orWhere('number', 'like', 'ICT-2026%')
+                .orWhere('subject', 'like', '%[AUTO-ALERT]%')
+                .orWhere('subject', 'like', '%[LATENCY-ALERT]%')
+                .orWhere('subject', 'like', '%[INFRA-GUARD]%')
+                .orWhere('source', 'Infra Guard');
+        })
+        .select('id', 'number', 'subject', 'status', 'source', 'priority', 'created_at', 'updated_at')
+        .orderBy('created_at', 'asc');
+
+    const excludedRows = await activeDb('kpi_overrides')
+        .where({ type: 'excluded_tickets', year });
+    const excludedSet = new Set(
+        excludedRows.filter(r => Number(r.value) === 1).map(r => String(r.metric))
+    );
+
+    return { tickets, excludedSet };
+}
+
+// GET /api/network/uptime-monthly?year=2026&type=uptime
 router.get('/uptime-monthly', async (req, res) => {
     try {
+        const activeDb = req.db || db;
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const kpiType = req.query.type || 'uptime';
-        const data = await db('traffic_history')
-            .select(
-                db.client.config.client === 'pg' ? db.raw("to_char(timestamp, 'MM') as month") : db.raw(`strftime('%m', CASE WHEN typeof(timestamp) = 'integer' OR typeof(timestamp) = 'real' THEN datetime(timestamp / 1000, 'unixepoch') ELSE timestamp END) as month`),
-                // Support both legacy server_up and new is_up, and handle strings like 'true'
-                db.client.config.client === 'pg' ? db.raw("SUM(CASE WHEN is_up = true OR is_up::text = '1' OR is_up::text = 'true' THEN 5 ELSE 0 END) as uptime_minutes") : db.raw('SUM(CASE WHEN is_up = 1 OR is_up = "true" THEN 5 ELSE 0 END) as uptime_minutes')
-            )
-            .whereRaw(db.client.config.client === 'pg' ? "to_char(timestamp, 'YYYY') = ?" : `strftime('%Y', CASE WHEN typeof(timestamp) = 'integer' OR typeof(timestamp) = 'real' THEN datetime(timestamp / 1000, 'unixepoch') ELSE timestamp END) = ?`, [year.toString()])
-            .groupBy('month')
-            .orderBy('month', 'asc');
 
-        const monthlyData = Array.from({ length: 12 }, (_, i) => {
-            const m = i + 1;
-            const daysInMonth = new Date(year, m, 0).getDate();
-            return {
-                month: m,
-                uptime_minutes: 0,
-                total_minutes: daysInMonth * 24 * 60
-            };
+        const { tickets, excludedSet } = await fetchYearIncidentContext(activeDb, year);
+
+        const monthlyData = computeMonthlyUptimeFromTickets({
+            tickets,
+            year,
+            categoryPredicate: (cat) => (kpiType === 'uptime' ? cat === 'server_global' : false),
+            excludedSet,
         });
 
-        data.forEach(d => {
-            const mIdx = parseInt(d.month) - 1;
-            if (mIdx >= 0 && mIdx < 12) {
-                // Only overwrite the uptime if it's the main uptime kpi
-                if (kpiType === 'uptime') {
-                    monthlyData[mIdx].uptime_minutes = d.uptime_minutes || 0;
+        // Apply non-zero historical manual overrides (e.g., locked Jan-Aug figures before Kuma live sync)
+        const overrides = await activeDb('kpi_overrides').where({ type: kpiType, year });
+        overrides.forEach(ov => {
+            const mIdx = ov.month - 1;
+            const numVal = Number(ov.value);
+            if (mIdx >= 0 && mIdx < 12 && !monthlyData[mIdx].isFuture) {
+                if (ov.metric === 'uptime_minutes' && numVal > 0) {
+                    monthlyData[mIdx].uptime_minutes = numVal;
+                    monthlyData[mIdx].source = 'manual_override';
+                } else if (ov.metric === 'total_minutes' && numVal > 0 && monthlyData[mIdx].source === 'manual_override') {
+                    monthlyData[mIdx].total_minutes = numVal;
                 }
             }
         });
 
-        // Calculate automatic percentage
-        monthlyData.forEach(m => {
-            m.percentage = m.total_minutes > 0 ? ((m.uptime_minutes / m.total_minutes) * 100).toFixed(2) : "0.00";
-        });
-
-        // Fetch overrides
-        const overrides = await db('kpi_overrides')
-            .where({ type: kpiType, year });
-
-        overrides.forEach(ov => {
-            const mIdx = ov.month - 1;
-            if (mIdx >= 0 && mIdx < 12) {
-                monthlyData[mIdx][ov.metric] = isNaN(ov.value) ? ov.value : Number(ov.value);
-            }
-        });
-
-        // Recalculate percentage if overridden values changed the base
         monthlyData.forEach(m => {
             if (m.total_minutes > 0) {
+                if (m.source === 'manual_override') {
+                    m.downtime_minutes = Math.max(0, m.total_minutes - m.uptime_minutes);
+                }
                 m.percentage = ((m.uptime_minutes / m.total_minutes) * 100).toFixed(2);
+            } else {
+                m.percentage = "0.00";
             }
         });
 
@@ -277,56 +289,73 @@ router.get('/uptime-monthly', async (req, res) => {
     }
 });
 
-// GET /api/network/isp-bandwidth-monthly?year=2025
+// GET /api/network/isp-bandwidth-monthly?year=2026
 router.get('/isp-bandwidth-monthly', async (req, res) => {
     try {
+        const activeDb = req.db || db;
         const year = parseInt(req.query.year) || new Date().getFullYear();
-        const data = await db('traffic_history')
-            .select(
-                db.client.config.client === 'pg' ? db.raw("to_char(timestamp, 'MM') as month") : db.raw(`strftime('%m', CASE WHEN typeof(timestamp) = 'integer' OR typeof(timestamp) = 'real' THEN datetime(timestamp / 1000, 'unixepoch') ELSE timestamp END) as month`),
-                db.client.config.client === 'pg' ? db.raw("SUM(CASE WHEN is_up_iforte = true OR is_up_iforte::text = '1' OR is_up_iforte::text = 'true' THEN 5 ELSE 0 END) as iforte_uptime") : db.raw('SUM(CASE WHEN is_up_iforte = 1 OR is_up_iforte = "true" THEN 5 ELSE 0 END) as iforte_uptime'),
-                db.client.config.client === 'pg' ? db.raw("SUM(CASE WHEN is_up_comnet = true OR is_up_comnet::text = '1' OR is_up_comnet::text = 'true' THEN 5 ELSE 0 END) as comnet_uptime") : db.raw('SUM(CASE WHEN is_up_comnet = 1 OR is_up_comnet = "true" THEN 5 ELSE 0 END) as comnet_uptime')
-            )
-            .whereRaw(db.client.config.client === 'pg' ? "to_char(timestamp, 'YYYY') = ?" : `strftime('%Y', CASE WHEN typeof(timestamp) = 'integer' OR typeof(timestamp) = 'real' THEN datetime(timestamp / 1000, 'unixepoch') ELSE timestamp END) = ?`, [year.toString()])
-            .groupBy('month')
-            .orderBy('month', 'asc');
+        const { tickets, excludedSet } = await fetchYearIncidentContext(activeDb, year);
+
+        const iforteMonthly = computeMonthlyUptimeFromTickets({
+            tickets,
+            year,
+            categoryPredicate: (cat) => cat === 'internet_iforte',
+            excludedSet,
+        });
+        const comnetMonthly = computeMonthlyUptimeFromTickets({
+            tickets,
+            year,
+            categoryPredicate: (cat) => cat === 'internet_comnet',
+            excludedSet,
+        });
 
         const monthlyData = Array.from({ length: 12 }, (_, i) => {
-            const m = i + 1;
-            const daysInMonth = new Date(year, m, 0).getDate();
+            const ifM = iforteMonthly[i];
+            const cmM = comnetMonthly[i];
+            const mergedIncidents = [...(ifM.incidents || []), ...(cmM.incidents || [])]
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             return {
-                month: m,
-                total_minutes: daysInMonth * 24 * 60, // Added calendar minutes
-                iforte_uptime: 0,
-                comnet_uptime: 0
+                month: i + 1,
+                total_minutes: ifM.total_minutes,
+                iforte_uptime: ifM.uptime_minutes,
+                comnet_uptime: cmM.uptime_minutes,
+                iforte_downtime: ifM.downtime_minutes,
+                comnet_downtime: cmM.downtime_minutes,
+                downtime_minutes: Math.round((ifM.downtime_minutes + cmM.downtime_minutes) / 2),
+                uptime_minutes: Math.round((ifM.uptime_minutes + cmM.uptime_minutes) / 2),
+                incident_count: mergedIncidents.filter(x => !x.excluded).length,
+                incidents: mergedIncidents,
+                isFuture: ifM.isFuture,
+                isCurrent: ifM.isCurrent,
+                source: 'tickets_realtime',
             };
         });
 
-        data.forEach(d => {
-            const mIdx = parseInt(d.month) - 1;
-            if (mIdx >= 0 && mIdx < 12) {
-                monthlyData[mIdx].iforte_uptime = d.iforte_uptime || 0;
-                monthlyData[mIdx].comnet_uptime = d.comnet_uptime || 0;
-            }
-        });
-
-        // Fetch overrides
-        const overrides = await db('kpi_overrides')
-            .where({ type: 'isp', year });
-
+        // Apply non-zero historical manual overrides (e.g., locked Jan-Aug figures before Kuma/InfraGuard live sync)
+        const overrides = await activeDb('kpi_overrides').where({ type: 'isp', year });
         overrides.forEach(ov => {
             const mIdx = ov.month - 1;
-            if (mIdx >= 0 && mIdx < 12) {
-                monthlyData[mIdx][ov.metric] = isNaN(ov.value) ? ov.value : Number(ov.value);
+            const numVal = Number(ov.value);
+            if (mIdx >= 0 && mIdx < 12 && !monthlyData[mIdx].isFuture && numVal > 0) {
+                if (ov.metric === 'iforte_uptime' || ov.metric === 'comnet_uptime') {
+                    monthlyData[mIdx][ov.metric] = numVal;
+                    monthlyData[mIdx].source = 'manual_override';
+                } else if (ov.metric === 'total_minutes' && monthlyData[mIdx].source === 'manual_override') {
+                    monthlyData[mIdx].total_minutes = numVal;
+                }
             }
         });
+
         const finalData = monthlyData.map(m => {
             const total = m.total_minutes || 0;
             const iforte = m.iforte_uptime || 0;
             const comnet = m.comnet_uptime || 0;
+            const avgUp = total > 0 ? Math.round((iforte + comnet) / 2) : 0;
             return {
                 ...m,
-                percentage: total > 0 ? (((iforte + comnet) / (total * 2)) * 100).toFixed(2) : "0.00"
+                uptime_minutes: avgUp,
+                downtime_minutes: total > 0 ? Math.max(0, total - avgUp) : 0,
+                percentage: total > 0 ? (((iforte + comnet) / (total * 2)) * 100).toFixed(2) : "0.00",
             };
         });
 
@@ -337,11 +366,77 @@ router.get('/isp-bandwidth-monthly', async (req, res) => {
     }
 });
 
+// GET /api/network/local-kpi?year=2026 - KPI Local (AP Wi-Fi, Mesin Ricoh, Switch/Server Lokal)
+router.get('/local-kpi', async (req, res) => {
+    try {
+        const activeDb = req.db || db;
+        const year = parseInt(req.query.year) || new Date().getFullYear();
+        const { tickets, excludedSet } = await fetchYearIncidentContext(activeDb, year);
+
+        const ricoh = computeMonthlyUptimeFromTickets({
+            tickets,
+            year,
+            categoryPredicate: (cat) => cat === 'local_ricoh',
+            excludedSet,
+        });
+        const ap = computeMonthlyUptimeFromTickets({
+            tickets,
+            year,
+            categoryPredicate: (cat) => cat === 'local_ap',
+            excludedSet,
+        });
+        const networkLocal = computeMonthlyUptimeFromTickets({
+            tickets,
+            year,
+            categoryPredicate: (cat) => cat === 'local_network',
+            excludedSet,
+        });
+
+        res.json({
+            year,
+            categories: [
+                { id: 'local_ricoh', title: 'Mesin Fotokopi / Printer Ricoh', subtitle: 'MC-PhotoCopy Office Atas, PPIC & Umum', monthly: ricoh },
+                { id: 'local_ap', title: 'Access Point (Wi-Fi Pabrik & Kantor)', subtitle: 'AP-OfficeLt1/2, AP-PPIC, AP-Mess, AGV-AP, MC-Sharing, Progresif', monthly: ap },
+                { id: 'local_network', title: 'Switch, Router & Server Lokal', subtitle: 'Switch Center 1/2, Router MikroTik, DNS/GW Wi-Fi, Server-Local, Network', monthly: networkLocal },
+            ],
+        });
+    } catch (e) {
+        console.error("Local KPI error:", e);
+        res.status(500).json({ error: "Failed to fetch local kpi" });
+    }
+});
+
+// POST /api/network/kpi-exclude-ticket - Exclude or restore a false-alarm incident ticket from SLA calc
+router.post('/kpi-exclude-ticket', async (req, res) => {
+    try {
+        const activeDb = req.db || db;
+        const { year, ticketNumber, excluded } = req.body;
+        if (!year || !ticketNumber) return res.status(400).json({ error: "year and ticketNumber required" });
+
+        if (excluded) {
+            await activeDb.raw(`
+                INSERT INTO kpi_overrides (type, year, month, metric, value)
+                VALUES ('excluded_tickets', ?, 1, ?, 1)
+                ON CONFLICT(type, year, month, metric) DO UPDATE SET value=1
+            `, [parseInt(year), String(ticketNumber)]);
+        } else {
+            await activeDb('kpi_overrides')
+                .where({ type: 'excluded_tickets', year: parseInt(year), metric: String(ticketNumber) })
+                .del();
+        }
+        res.json({ success: true });
+    } catch (e) {
+        console.error("KPI exclude ticket error:", e);
+        res.status(500).json({ error: "Failed to toggle excluded ticket" });
+    }
+});
+
 // GET /api/network/kpi-overrides - Fetch saved overrides
 router.get('/kpi-overrides', async (req, res) => {
     try {
+        const activeDb = req.db || db;
         const { type, year } = req.query;
-        let query = db('kpi_overrides');
+        let query = activeDb('kpi_overrides');
         if (type) query = query.where({ type });
         if (year) query = query.where({ year: parseInt(year) });
         const rows = await query.orderBy('month', 'asc');
@@ -352,35 +447,35 @@ router.get('/kpi-overrides', async (req, res) => {
     }
 });
 
-// POST /api/network/kpi-overrides - Save manual edits
+// POST /api/network/kpi-overrides - Save manual edits cleanly without zeroing future/unmodified months
 router.post('/kpi-overrides', async (req, res) => {
     try {
+        const activeDb = req.db || db;
         const { type, year, data } = req.body;
-        // data should be an array of objects representing months:
-        // [{ month: 1, target: 100, actual: 90 }, { month: 2, ... }]
-
         if (!Array.isArray(data)) return res.status(400).json({ error: "Data must be an array" });
 
-        // Iterate through each month and each metric key to upsert
         for (const monthRow of data) {
             const month = monthRow.month;
             if (!month) continue;
+            const win = getMonthWindowWIB(parseInt(year), parseInt(month));
 
             for (const [metric, value] of Object.entries(monthRow)) {
-                if (metric === 'month' || metric === 'percentage' || metric === 'name') continue; // Skip non-metrics
-
-                // Prepare numeric value
+                if (metric === 'month' || metric === 'percentage' || metric === 'name' || metric === 'delete') continue;
+                if (value === null || value === undefined || value === '') {
+                    await activeDb('kpi_overrides').where({ type, year: parseInt(year), month: parseInt(month), metric }).del();
+                    continue;
+                }
                 const numValue = parseFloat(value);
                 if (isNaN(numValue)) continue;
 
-                // Upsert logic (SQLite handles REPLACE INTO)
-                // We can first delete and then insert or use an ON CONFLICT equivalent.
-                // SQLite 3.24+ supports UPSERT
-                await db.raw(`
+                // Do not store synthetic 0 overrides for future months or current/past live metrics
+                if (win.isFuture && numValue === 0) continue;
+
+                await activeDb.raw(`
                     INSERT INTO kpi_overrides (type, year, month, metric, value)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(type, year, month, metric) DO UPDATE SET value=excluded.value
-                `, [type, year, month, metric, numValue]);
+                `, [type, parseInt(year), parseInt(month), metric, numValue]);
             }
         }
 

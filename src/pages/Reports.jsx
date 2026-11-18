@@ -6,6 +6,7 @@ import { FileText, BarChart2, Target, Monitor, AlertTriangle, Network, ShieldChe
 import { formatDate } from '../utils/scheduler';
 import KPIGraph from '../components/KPIGraph';
 import KPIScorecardTable from '../components/KPIScorecardTable';
+import KPILocalTab from '../components/KPILocalTab';
 import axios from 'axios';
 
 export default function Reports() {
@@ -24,6 +25,7 @@ export default function Reports() {
     const [monthlyUptimeKgKpi, setMonthlyUptimeKgKpi] = useState([]);
     const [monthlyIspKpi, setMonthlyIspKpi] = useState([]);
     const [monthlyTicketsKpi, setMonthlyTicketsKpi] = useState([]);
+    const [localKpiCategories, setLocalKpiCategories] = useState([]);
     const [digitalizationData, setDigitalizationData] = useState([]);
     const [reviewIkData, setReviewIkData] = useState([]);
 
@@ -57,12 +59,13 @@ export default function Reports() {
     const fetchKpiData = async () => {
         try {
             const org = JSON.parse(sessionStorage.getItem('user') || '{}')?.organization || 'TCF-SG';
-            const [maintRes, uptimeRes, uptimeKgRes, ispRes, ticketsRes, overridesRes] = await Promise.all([
+            const [maintRes, uptimeRes, uptimeKgRes, ispRes, ticketsRes, localRes, overridesRes] = await Promise.all([
                 fetch(`/api/network/maintenance/monthly-kpi?year=${year}&organization=${org}`),
                 fetch(`/api/network/uptime-monthly?year=${year}&organization=${org}`),
                 fetch(`/api/network/uptime-monthly?year=${year}&type=uptime_kg&organization=${org}`),
                 fetch(`/api/network/isp-bandwidth-monthly?year=${year}&organization=${org}`),
                 fetch(`/api/network/tickets/monthly-kpi?year=${year}&organization=${org}`),
+                fetch(`/api/network/local-kpi?year=${year}&organization=${org}`),
                 fetch(`/api/network/kpi-overrides?year=${year}`)
             ]);
             const maintData = await maintRes.json();
@@ -80,6 +83,11 @@ export default function Reports() {
 
             const ticketsData = await ticketsRes.json();
             setMonthlyTicketsKpi(Array.isArray(ticketsData) ? ticketsData : (ticketsData.monthly || []));
+
+            if (localRes.ok) {
+                const localData = await localRes.json();
+                setLocalKpiCategories(localData.categories || []);
+            }
 
             // Populate Digitalization & Review IK from overrides
             if (overridesRes.ok) {
@@ -104,6 +112,21 @@ export default function Reports() {
             }
         } catch (err) {
             console.error('Failed to fetch KPI data', err);
+        }
+    };
+
+    const handleToggleExcludeTicket = async (ticketNumber, excluded) => {
+        try {
+            const res = await fetch('/api/network/kpi-exclude-ticket', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ year, ticketNumber, excluded })
+            });
+            if (res.ok) {
+                await fetchKpiData();
+            }
+        } catch (err) {
+            console.error('Error toggling ticket exclusion:', err);
         }
     };
 
@@ -164,7 +187,7 @@ export default function Reports() {
     ];
 
     return (
-        <div className="max-w-[1600px] mx-auto space-y-5 pb-20">
+        <div className="max-w-[1600px] w-full min-w-0 mx-auto space-y-5 pb-20">
             {/* Header and Mode Navigation */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-5">
@@ -189,7 +212,18 @@ export default function Reports() {
                             }`}
                         >
                             <FileSpreadsheet size={15} />
-                            Scorecard Matriks (Format Excel)
+                            Scorecard Matriks (Management KPI)
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('local')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                                activeTab === 'local'
+                                    ? 'bg-white text-amber-600 shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            <Layers size={15} />
+                            KPI Local (AP, Ricoh & Lokal)
                         </button>
                         <button
                             onClick={() => setActiveTab('charts')}
@@ -241,25 +275,24 @@ export default function Reports() {
                             reviewIkData={reviewIkData}
                             onSaveOverride={handleKpiSave}
                             onRefresh={fetchKpiData}
+                            onToggleExcludeTicket={handleToggleExcludeTicket}
+                        />
+                    ) : activeTab === 'local' ? (
+                        <KPILocalTab
+                            year={year}
+                            localKpiData={localKpiCategories}
+                            onRefresh={fetchKpiData}
+                            onToggleExcludeTicket={handleToggleExcludeTicket}
                         />
                     ) : (
                         <div className="space-y-5">
                             <div className="grid grid-cols-1 gap-5">
                                 <KPIGraph
                                     kpiType="uptime"
-                                    title="Uptime Server (Sadang)"
+                                    title="Uptime Server (Karawang)"
                                     data={monthlyUptimeKpi}
                                     dataKeys={['uptime_minutes', 'total_minutes']}
                                     colors={['#006FFF', '#94A3B8']}
-                                    tableLabels={['Uptime Min', 'Total Min']}
-                                    onSave={handleKpiSave}
-                                />
-                                <KPIGraph
-                                    kpiType="uptime_kg"
-                                    title="Uptime Server (Karawang)"
-                                    data={monthlyUptimeKgKpi}
-                                    dataKeys={['uptime_minutes', 'total_minutes']}
-                                    colors={['#F59E0B', '#94A3B8']}
                                     tableLabels={['Uptime Min', 'Total Min']}
                                     onSave={handleKpiSave}
                                 />

@@ -7,15 +7,17 @@ import {
     CheckCircle, Tag, Database, Layers, Wifi, X, MemoryStick, Server,
     LayoutDashboard, Box, Terminal, Plug, HelpCircle, FileDigit, CalendarDays, Upload,
     Keyboard, Mouse, Copy, Check, Download, Globe, Radio, Play, Plus, Network, Zap,
-    ShieldCheck, Lock, Unlock, RotateCw, ShieldAlert, CheckCircle2, Coins, TrendingUp, Award, Sparkles
+    ShieldCheck, Lock, Unlock, RotateCw, RotateCcw, ShieldAlert, CheckCircle2, Coins, TrendingUp, Award, Sparkles
 } from 'lucide-react';
 import AssetLabel from '../components/AssetLabel';
 import RemoteDesktop from '../components/RemoteDesktop';
+import ReturnBastModal from '../components/ReturnBastModal';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateAssetHistoryPdf } from '../utils/generateAssetHistoryPdf';
 import { generateHandoverPdf } from '../utils/generateHandoverPdf';
 import { generateTicketPdf } from '../utils/generateTicketPdf';
+import Swal from 'sweetalert2';
 
 
 export default function AssetDetail() {
@@ -33,6 +35,7 @@ export default function AssetDetail() {
         vm_code: '',
         server_purpose: '',
         location: '',
+        department: '',
         contact: '',
         manufacturer: '',
         model: '',
@@ -56,6 +59,8 @@ export default function AssetDetail() {
     const [actionMessage, setActionMessage] = useState(null);
     const [securityAlerts, setSecurityAlerts] = useState([]);
     const [clearingThreats, setClearingThreats] = useState(false);
+    const [creatingSecurityTicket, setCreatingSecurityTicket] = useState(false);
+    const [showReturnBastModal, setShowReturnBastModal] = useState(false);
     const [healthData, setHealthData] = useState(null);
     const [submittingBudget, setSubmittingBudget] = useState(false);
     const [budgetSubmitted, setBudgetSubmitted] = useState(false);
@@ -142,19 +147,111 @@ export default function AssetDetail() {
         if (!form.id) return;
         setClearingThreats(true);
         try {
+            const token = localStorage.getItem('token') || sessionStorage.getItem('token');
             const org = sessionStorage.getItem('organization') || 'TCF-SG';
             const res = await fetch(`/api/network/assets/${form.id}/clear-threats`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-organization': org }
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-organization': org,
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                }
             });
             if (res.ok) {
                 setForm(prev => ({ ...prev, threats_found: 0 }));
                 setActionMessage({ type: 'success', text: 'Status ancaman berhasil direset (Aset dinyatakan Bersih/Aman).' });
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Status Ancaman Direset',
+                    text: 'Aset telah dinyatakan Bersih / Aman dari ancaman.',
+                    toast: true,
+                    position: 'top-end',
+                    timer: 3000,
+                    showConfirmButton: false
+                });
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal Mereset Status Ancaman',
+                    text: errData.error || 'Terjadi kesalahan sistem.',
+                    toast: true,
+                    position: 'top-end',
+                    timer: 3500,
+                    showConfirmButton: false
+                });
             }
         } catch (e) {
             console.error('Failed to clear threats', e);
+            Swal.fire({
+                icon: 'error',
+                title: 'Error Koneksi',
+                text: 'Koneksi ke server terputus.',
+                toast: true,
+                position: 'top-end',
+                timer: 3500,
+                showConfirmButton: false
+            });
         } finally {
             setClearingThreats(false);
+        }
+    };
+
+    const handleCreateSecurityTicket = async () => {
+        if (!form.id) return;
+        setCreatingSecurityTicket(true);
+        try {
+            const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+            const org = sessionStorage.getItem('organization') || 'TCF-SG';
+            const res = await fetch(`/api/network/assets/${form.id}/create-security-ticket`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-organization': org,
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                }
+            });
+            const data = await res.json();
+            if (res.ok) {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Tiket Insiden Berhasil Dibuat!',
+                    html: `<div class="text-left space-y-2 mt-2">
+                        <div class="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-sm">
+                            <b>Nomor Tiket:</b> <span class="font-mono font-bold text-amber-700">${data.ticket_number}</span><br>
+                            <b>Kategori:</b> Security Incident / Malware Alert<br>
+                            <b>Prioritas:</b> High (P1)
+                        </div>
+                        <p class="text-xs text-slate-500">
+                            Insiden ini telah resmi dicatat ke sistem Helpdesk & Log Aset untuk kelengkapan <b>Eviden Audit ISO 27001 / IATF 16949</b>.
+                        </p>
+                    </div>`,
+                    confirmButtonText: 'Buka Menu Tiket',
+                    showCancelButton: true,
+                    cancelButtonText: 'Tetap di Sini',
+                    confirmButtonColor: '#d97706'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        navigate('/ict/tickets');
+                    }
+                });
+                // Reload asset data to show new ticket in Tickets tab
+                setTimeout(() => fetchAsset(), 1000);
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal Membuat Tiket',
+                    text: data.error || 'Terjadi kesalahan saat memproses tiket insiden.'
+                });
+            }
+        } catch (err) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Koneksi Terputus',
+                text: 'Gagal menghubungi server.'
+            });
+        } finally {
+            setCreatingSecurityTicket(false);
         }
     };
 
@@ -163,26 +260,82 @@ export default function AssetDetail() {
         setActionLoading(actionType);
         setActionMessage(null);
         try {
+            const token = localStorage.getItem('token') || sessionStorage.getItem('token');
             const org = sessionStorage.getItem('organization') || 'TCF-SG';
+
+            // Show immediate toast feedback so user knows it was clicked
+            if (actionType === 'quick_scan') {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Perintah Scan Dikirim...',
+                    text: 'Memerintahkan Windows Defender Quick Scan pada Endpoint PC.',
+                    toast: true,
+                    position: 'top-end',
+                    timer: 4000,
+                    showConfirmButton: false
+                });
+            } else if (actionType === 'usb_lock_now') {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Mengunci USB Endpoint...',
+                    text: 'Menerapkan kebijakan Registry & GPO Lock USB.',
+                    toast: true,
+                    position: 'top-end',
+                    timer: 4000,
+                    showConfirmButton: false
+                });
+            }
+
             const res = await fetch(`/api/network/agents/${form.id}/action`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-organization': org
+                    'x-organization': org,
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
                 },
                 body: JSON.stringify({ action: actionType })
             });
             const data = await res.json();
             if (res.ok) {
-                setActionMessage({ type: 'success', text: data.message || 'Perintah berhasil dikirim ke Agent PC!' });
-                if (actionType === 'resync' || actionType === 'restart_rustdesk') {
-                    setTimeout(() => fetchAsset(), 6000);
+                const msg = data.message || 'Perintah berhasil dikirim ke Agent PC!';
+                setActionMessage({ type: 'success', text: msg });
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Perintah Diterima Agent!',
+                    text: msg,
+                    toast: true,
+                    position: 'top-end',
+                    timer: 4500,
+                    showConfirmButton: false
+                });
+                if (actionType === 'resync' || actionType === 'restart_rustdesk' || actionType === 'quick_scan') {
+                    setTimeout(() => fetchAsset(), 5000);
                 }
             } else {
-                setActionMessage({ type: 'error', text: data.error || 'Gagal mengirim aksi ke Agent' });
+                const errMsg = data.error || 'Gagal mengirim aksi ke Agent';
+                setActionMessage({ type: 'error', text: errMsg });
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal Mengirim Perintah',
+                    text: errMsg,
+                    toast: true,
+                    position: 'top-end',
+                    timer: 4000,
+                    showConfirmButton: false
+                });
             }
         } catch (err) {
-            setActionMessage({ type: 'error', text: 'Koneksi ke server terputus saat mengirim aksi.' });
+            const netErr = 'Koneksi ke server terputus saat mengirim aksi.';
+            setActionMessage({ type: 'error', text: netErr });
+            Swal.fire({
+                icon: 'error',
+                title: 'Error Jaringan',
+                text: netErr,
+                toast: true,
+                position: 'top-end',
+                timer: 4000,
+                showConfirmButton: false
+            });
         } finally {
             setActionLoading(null);
         }
@@ -244,6 +397,7 @@ export default function AssetDetail() {
     const [masterNodeTypes, setMasterNodeTypes] = useState([]);
     const [masterStatuses, setMasterStatuses] = useState([]);
     const [masterLocations, setMasterLocations] = useState([]);
+    const [masterDepartments, setMasterDepartments] = useState([]);
 
     useEffect(() => {
         fetchInitialData();
@@ -253,11 +407,12 @@ export default function AssetDetail() {
     const fetchMasterData = async () => {
         try {
             const org = user?.organization || 'TCF-SG';
-            const [catRes, nodeRes, dropRes, deptRes] = await Promise.all([
+            const [catRes, nodeRes, dropRes, deptRes, ricohDeptRes] = await Promise.all([
                 fetch(`/api/network/global/categories?organization=${org}`),
                 fetch(`/api/network/global/node-types?organization=${org}`),
                 fetch(`/api/network/global/dropdowns?organization=${org}`),
-                fetch(`/api/departments`)
+                fetch(`/api/departments`),
+                fetch(`/api/network/ricoh/departments?organization=${org}`).catch(() => ({ ok: false }))
             ]);
             
             if (catRes.ok) {
@@ -274,6 +429,13 @@ export default function AssetDetail() {
             }
 
             let locations = [];
+            const deptNames = new Set([
+                'Engineering PE', 'Engineering R&D', 'Engineering TSTM',
+                'HRD - GA', 'HRGA', 'ICT', 'Maintenance', 'Marketing',
+                'PPIC', 'Production Engineering', 'Produksi', 'Purchasing',
+                'QC', 'QMR', 'Quality Control', 'R&D', 'Tool Making', 'Tool Service'
+            ]);
+
             if (dropRes.ok) {
                 const dropData = await dropRes.json();
                 setMasterStatuses(dropData.filter(d => d.category === 'asset_status' && d.is_active));
@@ -284,17 +446,28 @@ export default function AssetDetail() {
                 const deptData = await deptRes.json();
                 if (Array.isArray(deptData) && deptData.length > 0) {
                     deptData.forEach(d => {
-                        if (d.name && !locations.some(l => l.value === d.name)) {
-                            locations.push({ value: d.name, label: d.name });
+                        if (d.name) {
+                            deptNames.add(d.name);
+                            if (!locations.some(l => l.value === d.name)) {
+                                locations.push({ value: d.name, label: d.name });
+                            }
                         }
                     });
                 }
+            }
+            if (ricohDeptRes.ok) {
+                const rDeptData = await ricohDeptRes.json().catch(() => []);
+                const rList = Array.isArray(rDeptData) ? rDeptData : (rDeptData.departments || []);
+                rList.forEach(d => {
+                    if (d?.name) deptNames.add(d.name);
+                });
             }
             if (locations.length === 0) {
                 const defaultDepts = ['ICT', 'Purchasing', 'PPIC', 'HRD-GA', 'Produksi', 'Engineering', 'Marketing', 'Maintenance', 'QC', 'QMR'];
                 locations = defaultDepts.map(d => ({ value: d, label: d }));
             }
             setMasterLocations(locations);
+            setMasterDepartments(Array.from(deptNames).sort((a, b) => a.localeCompare(b)));
         } catch (err) {
             console.error('Failed to fetch master data', err);
             // Fallback
@@ -314,6 +487,12 @@ export default function AssetDetail() {
                 { value: 'Marketing', label: 'Marketing' },
                 { value: 'QC', label: 'QC' },
                 { value: 'QMR', label: 'QMR' }
+            ]);
+            setMasterDepartments([
+                'Engineering PE', 'Engineering R&D', 'Engineering TSTM',
+                'HRD - GA', 'HRGA', 'ICT', 'Maintenance', 'Marketing',
+                'PPIC', 'Production Engineering', 'Produksi', 'Purchasing',
+                'QC', 'QMR', 'Quality Control', 'R&D', 'Tool Making', 'Tool Service'
             ]);
         }
     };
@@ -369,6 +548,7 @@ export default function AssetDetail() {
                 ...data, 
                 specs: formattedSpecs || '', 
                 hr_employee_id: data.hr_employee_id || '', 
+                department: data.department || data.user_department || '',
                 location: initialLocation,
                 purchase_date: (data.purchase_date || '').substring(0, 10) 
             });
@@ -557,6 +737,7 @@ export default function AssetDetail() {
                 ...prev,
                 hr_employee_id: selectedEmpId,
                 user_id: selectedEmpId ? prev.user_id : '',
+                department: userDept || prev.department,
                 location: userDept || prev.location
             }));
         } else {
@@ -796,86 +977,82 @@ export default function AssetDetail() {
                 <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50/50 p-6 lg:p-8">
 
                     {/* Security Fabric Threat Alert Banner */}
-                    {form.threats_found > 0 && (() => {
-                        let recentDefenderThreats = [];
-                        try {
-                            const parsedSpecs = typeof form.specs === 'string' && form.specs.includes('{')
-                                ? JSON.parse(form.specs)
-                                : (typeof form.specs === 'object' ? form.specs : null);
-                            if (Array.isArray(parsedSpecs?.hardening?.recent_threats)) {
-                                recentDefenderThreats = parsedSpecs.hardening.recent_threats;
-                            }
-                        } catch (e) {}
-
-                        return (
-                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-rose-800 flex flex-col gap-3 shadow-sm mb-6 animate-in fade-in">
-                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                                    <div className="flex items-start gap-3">
-                                        <div className="p-2 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
-                                            <ShieldAlert size={22} />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-black text-sm uppercase tracking-wide text-rose-900 flex items-center gap-2">
-                                                <span>🚨 Peringatan Keamanan Aktif: {form.threats_found} Ancaman Terdeteksi!</span>
-                                            </h4>
-                                            <p className="text-xs text-rose-700 mt-0.5 leading-relaxed">
-                                                Wazuh SIEM & Windows Defender mencatat aktivitas mencurigakan pada perangkat ini. Segera jalankan remediasi di bawah.
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <button
-                                            type="button"
-                                            onClick={() => triggerAgentAction('quick_scan')}
-                                            className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                        >
-                                            <ShieldCheck size={14} /> Scan Sekarang
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => triggerAgentAction('usb_lock_now')}
-                                            className="px-3.5 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                                        >
-                                            <Lock size={14} /> Kunci USB
-                                        </button>
-                                        <button
-                                            type="button"
-                                            disabled={clearingThreats}
-                                            onClick={handleClearThreats}
-                                            className="px-3 py-2 bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                                        >
-                                            <CheckCircle2 size={14} /> {clearingThreats ? '...' : 'Clear'}
-                                        </button>
-                                    </div>
+                    {form.threats_found > 0 && (
+                        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-rose-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm mb-6 animate-in fade-in">
+                            <div className="flex items-start gap-3">
+                                <div className="p-2 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
+                                    <ShieldAlert size={22} />
                                 </div>
-
-                                {(recentDefenderThreats.length > 0 || securityAlerts.length > 0) && (
-                                    <div className="mt-1 pt-3 border-t border-rose-200/80 bg-white/70 rounded-xl p-3">
-                                        <div className="text-[11px] font-black uppercase tracking-wider text-rose-900 mb-2 flex items-center gap-1.5">
-                                            <span>📋 Rincian Deteksi Ancaman (Windows Defender / Wazuh SIEM):</span>
-                                        </div>
-                                        <ul className="space-y-1.5 text-xs font-mono text-rose-900">
-                                            {recentDefenderThreats.map((item, idx) => (
-                                                <li key={`def-${idx}`} className="flex items-start gap-2 bg-rose-100/60 px-2.5 py-1.5 rounded-lg border border-rose-200">
-                                                    <span className="font-bold text-rose-600 shrink-0">#{idx + 1} [Defender]</span>
-                                                    <span className="break-all">{item}</span>
-                                                </li>
-                                            ))}
-                                            {securityAlerts.slice(0, 5).map((al, idx) => (
-                                                <li key={`waz-${idx}`} className="flex items-start gap-2 bg-rose-100/60 px-2.5 py-1.5 rounded-lg border border-rose-200">
-                                                    <span className="font-bold text-rose-600 shrink-0">[Wazuh Lv.{al.rule_level || al.severity || '!'}]</span>
-                                                    <span className="break-all">
-                                                        {al.timestamp ? new Date(Number(al.timestamp)).toLocaleString('id-ID') + ' — ' : ''}
-                                                        {al.rule_description || al.description || 'Aktivitas mencurigakan terdeteksi'}
-                                                    </span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
+                                <div>
+                                    <h4 className="font-black text-sm uppercase tracking-wide text-rose-900 flex items-center gap-2">
+                                        <span>🚨 Peringatan Keamanan Aktif: {form.threats_found} Ancaman Terdeteksi!</span>
+                                    </h4>
+                                    <p className="text-xs text-rose-700 mt-0.5 leading-relaxed">
+                                        Wazuh SIEM & Windows Defender mencatat aktivitas mencurigakan pada perangkat ini. Segera jalankan remediasi di bawah.
+                                    </p>
+                                </div>
                             </div>
-                        );
-                    })()}
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                <button
+                                    type="button"
+                                    disabled={actionLoading === 'quick_scan'}
+                                    onClick={() => triggerAgentAction('quick_scan')}
+                                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                                >
+                                    {actionLoading === 'quick_scan' ? (
+                                        <>
+                                            <RotateCw size={14} className="animate-spin" /> Menjalankan Scan...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <ShieldCheck size={14} /> Scan Sekarang
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={actionLoading === 'usb_lock_now'}
+                                    onClick={() => triggerAgentAction('usb_lock_now')}
+                                    className="px-3.5 py-2 bg-slate-900 hover:bg-black disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                                >
+                                    {actionLoading === 'usb_lock_now' ? (
+                                        <>
+                                            <RotateCw size={14} className="animate-spin" /> Mengunci...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Lock size={14} /> Kunci USB
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={creatingSecurityTicket}
+                                    onClick={handleCreateSecurityTicket}
+                                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                                    title="Buat tiket insiden resmi di Helpdesk untuk eviden audit ISO/IATF"
+                                >
+                                    {creatingSecurityTicket ? (
+                                        <>
+                                            <RotateCw size={14} className="animate-spin" /> Menerbitkan Tiket...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <FileText size={14} /> Buat Tiket Eviden
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={clearingThreats}
+                                    onClick={handleClearThreats}
+                                    className="px-3 py-2 bg-white hover:bg-rose-100 disabled:opacity-60 border border-rose-300 text-rose-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
+                                >
+                                    <CheckCircle2 size={14} /> {clearingThreats ? 'Mereset...' : 'Clear'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     
                     {/* ── TAB: COMPUTER ── */}
                     {activeTab === 'computer' && (
@@ -955,11 +1132,23 @@ export default function AssetDetail() {
                                         </select>
                                     </div>
                                     <div>
+                                        <label className={labelClass}>Department (Override)</label>
+                                        <select name="department" value={form.department || ''} onChange={handleChange} className={inputClass}>
+                                            <option value="">Follow HR / User Department</option>
+                                            {form.department && !masterDepartments.includes(form.department) && (
+                                                <option value={form.department}>{form.department}</option>
+                                            )}
+                                            {masterDepartments.map((d, i) => (
+                                                <option key={i} value={d}>{d}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
                                         <label className={labelClass}>User / Custodian</label>
                                         <select name="hr_employee_id" value={form.hr_employee_id} onChange={handleChange} className={inputClass}>
                                             <option value="">— Unassigned —</option>
                                             {users.map(u => (
-                                                <option key={u.id} value={u.id}>{u.name}</option>
+                                                <option key={u.id} value={u.id}>{u.name} {u.department ? `(${u.department})` : ''}</option>
                                             ))}
                                         </select>
                                     </div>
@@ -1573,6 +1762,16 @@ export default function AssetDetail() {
                                         title="Print Serah Terima Perangkat Ini (03-02)"
                                     >
                                         <Printer size={16} /> Print BAST
+                                    </button>
+                                    <button 
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            setShowReturnBastModal(true);
+                                        }}
+                                        className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-sm transition-all text-xs font-black uppercase flex items-center gap-2"
+                                        title="Cetak Berita Acara Pengembalian Perangkat ICT (03-05)"
+                                    >
+                                        <RotateCcw size={16} /> BAST Kembali
                                     </button>
                                     <div className="bg-white border border-slate-200 px-4 py-2 rounded-xl shadow-sm text-sm font-bold text-slate-700">
                                         {historyLogs.length} Events
@@ -2564,6 +2763,22 @@ export default function AssetDetail() {
 
                 </div>
             </div>
+            {(() => {
+                const userData = users.find((u) => u.id === form.hr_employee_id) || {};
+                return (
+                    <ReturnBastModal
+                        isOpen={showReturnBastModal}
+                        onClose={() => setShowReturnBastModal(false)}
+                        userName={userData.name || form.user_id || form.contact || ''}
+                        assets={[form]}
+                        initialData={{
+                            nik: userData.nik || '',
+                            jabatan: userData.position || '',
+                            divisi: userData.department || form.location || '',
+                        }}
+                    />
+                );
+            })()}
         </div>
     );
 }

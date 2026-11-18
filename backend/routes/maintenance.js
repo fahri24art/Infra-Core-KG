@@ -1,8 +1,40 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { getMonthWindowWIB } = require('../utils/kpiTime');
 
-// GET /api/maintenance/stats - Dashboard summary
+const parseJsonSafe = (val) => {
+    if (!val) return {};
+    if (typeof val === 'object') return { ...val };
+    if (typeof val === 'string') {
+        try {
+            const parsed = JSON.parse(val);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (e) {
+            return {};
+        }
+    }
+    return {};
+};
+
+const isMonitorAsset = (asset) => ((asset?.category || '').toLowerCase() === 'monitor');
+
+const isCctvAsset = (asset) => {
+    const cat = (asset?.category || '').toLowerCase();
+    return cat.includes('cctv') || cat.includes('camera');
+};
+
+const isKpiQualifiedAsset = (asset) => !isMonitorAsset(asset) && !isCctvAsset(asset);
+
+const deriveWeekKeyFromDate = (dateVal) => {
+    const d = dateVal ? new Date(dateVal) : new Date();
+    const wib = new Date((Number.isNaN(d.getTime()) ? Date.now() : d.getTime()) + 7 * 3600 * 1000);
+    const m = wib.getUTCMonth() + 1;
+    const w = Math.min(4, Math.max(1, Math.ceil(wib.getUTCDate() / 7)));
+    return `${m}_${w}`;
+};
+
+// GET /api/maintenance/stats - Dashboard summary (IT KPI only; CCTV separated)
 router.get('/stats', async (req, res) => {
     const year = req.query.year || new Date().getFullYear();
     try {
@@ -18,23 +50,33 @@ router.get('/stats', async (req, res) => {
             return typ === 'laptop' || typ === 'notebook';
         });
 
-        // Filter for "Qualified" assets (Everything EXCEPT Monitor, since Monitor is a set with PC)
-        const qualifiedAssets = assets.filter(a => {
-            const cat = (a.category || '').toLowerCase();
-            return cat !== 'monitor';
-        });
-
+        // KPI excludes Monitor (bundled with PC) and CCTV (non-KPI security surveillance)
+        const qualifiedAssets = assets.filter(isKpiQualifiedAsset);
         const qualifiedAssetIds = qualifiedAssets.map(a => a.id);
         const totalQualified = qualifiedAssetIds.length;
 
-        // Completion status: unique qualified assets with at least one record in this year
-        const completedRecords = await db('maintenance_records')
-            .where('year', year)
-            .whereIn('asset_id', qualifiedAssetIds)
-            .select('asset_id');
+        const completedRecords = qualifiedAssetIds.length > 0
+            ? await db('maintenance_records')
+                .where('year', year)
+                .where('status', 'Completed')
+                .whereIn('asset_id', qualifiedAssetIds)
+                .select('asset_id')
+            : [];
 
         const completedUniqueIds = new Set(completedRecords.map(r => r.asset_id));
         const doneCount = completedUniqueIds.size;
+
+        // Separate CCTV stats (Non-KPI)
+        const cctvAssets = assets.filter(isCctvAsset);
+        const cctvIds = cctvAssets.map(a => a.id);
+        const cctvRecords = cctvIds.length > 0
+            ? await db('maintenance_records')
+                .where('year', year)
+                .where('status', 'Completed')
+                .whereIn('asset_id', cctvIds)
+                .select('asset_id')
+            : [];
+        const cctvDoneCount = new Set(cctvRecords.map(r => r.asset_id)).size;
 
         res.json({
             devices: {
@@ -47,6 +89,12 @@ router.get('/stats', async (req, res) => {
                 pending: Math.max(0, totalQualified - doneCount),
                 total: totalQualified,
                 percentage: totalQualified > 0 ? (doneCount / totalQualified * 100).toFixed(1) : 0
+            },
+            cctv: {
+                total: cctvAssets.length,
+                done: cctvDoneCount,
+                pending: Math.max(0, cctvAssets.length - cctvDoneCount),
+                percentage: cctvAssets.length > 0 ? (cctvDoneCount / cctvAssets.length * 100).toFixed(1) : 0
             }
         });
     } catch (err) {
@@ -55,44 +103,48 @@ router.get('/stats', async (req, res) => {
     }
 });
 
-// GET /api/maintenance/monthly-kpi - Aggregate target vs actual per month
+// GET /api/maintenance/monthly-kpi - Aggregate target vs actual per month (IT KPI only)
 router.get('/monthly-kpi', async (req, res) => {
-    const year = req.query.year || new Date().getFullYear();
+    const year = Number(req.query.year || new Date().getFullYear());
+    const activeDb = req.db || db;
     try {
-        // 0. Fetch total qualified assets (exclude Monitors since they are bundled with PCs)
-        const assets = await db('assets').select('id', 'category', 'type', 'name');
-        const qualifiedAssets = assets.filter(a => {
-            const cat = (a.category || '').toLowerCase();
-            return cat !== 'monitor';
-        });
+        // Fetch total KPI-qualified assets (exclude Monitor and CCTV)
+        const assets = await activeDb('assets').select('id', 'category', 'type', 'name');
+        const qualifiedAssets = assets.filter(isKpiQualifiedAsset);
         const qualifiedAssetIds = new Set(qualifiedAssets.map(a => a.id));
 
         // 1. Fetch all plans for the year
-        const plans = await db('maintenance_plans')
-            .where({ year, maintenance_type: 'Semester' })
-            .select('planning_data', 'semester');
+        const plans = await activeDb('maintenance_plans')
+            .where({ year: String(year), maintenance_type: 'Semester' })
+            .select('asset_id', 'planning_data', 'semester');
 
         // 2. Fetch all completed records for the year
-        const records = await db('maintenance_records')
+        const records = await activeDb('maintenance_records')
             .whereRaw('CAST(year AS TEXT) = ?', [year.toString()])
             .where('status', 'Completed')
             .select('asset_id', 'week_key', 'maintenance_date', 'status');
 
-        const monthlyData = Array.from({ length: 12 }, (_, i) => ({
-            month: i + 1,
-            target: 0,
-            actual: 0
-        }));
+        const monthlyData = Array.from({ length: 12 }, (_, i) => {
+            const m = i + 1;
+            const win = getMonthWindowWIB(year, m);
+            return {
+                month: m,
+                target: 0,
+                actual: 0,
+                isFuture: win.isFuture,
+                isCurrent: win.isCurrent,
+            };
+        });
 
-        // Process Targets (Summing planned assets per month)
+        // Process Targets (Only count KPI-qualified assets, excluding Monitor and CCTV)
         plans.forEach(p => {
+            if (!qualifiedAssetIds.has(p.asset_id)) return;
             try {
-                const pData = typeof p.planning_data === 'string' ? JSON.parse(p.planning_data) : p.planning_data;
+                const pData = parseJsonSafe(p.planning_data);
                 const monthsInPlan = new Set();
                 Object.keys(pData).forEach(key => {
-                    let month = parseInt(key.split('_')[0]);
-                    // Shift month if Semester 2
-                    if (p.semester === 2) {
+                    let month = parseInt(key.split('_')[0], 10);
+                    if (p.semester === 2 && month >= 1 && month <= 6) {
                         month += 6;
                     }
                     if (month >= 1 && month <= 12) {
@@ -105,14 +157,13 @@ router.get('/monthly-kpi', async (req, res) => {
             } catch (e) { }
         });
 
-        // Process Actuals (Count unique assets per month based on ACTUAL DATE to separate semesters)
+        // Process Actuals (Count unique completed assets per month based on maintenance_date in WIB)
         const uniqueMonthAssets = Array.from({ length: 12 }, () => new Set());
 
         records.forEach(r => {
             if (qualifiedAssetIds.has(r.asset_id)) {
-                // Use maintenance_date to determine absolute month
-                const mDate = new Date(r.maintenance_date);
-                const absMonth = mDate.getMonth(); // 0-11
+                const mDate = new Date(new Date(r.maintenance_date).getTime() + 7 * 3600 * 1000);
+                const absMonth = mDate.getUTCMonth(); // 0-11
                 if (absMonth >= 0 && absMonth <= 11) {
                     uniqueMonthAssets[absMonth].add(r.asset_id);
                 }
@@ -128,29 +179,32 @@ router.get('/monthly-kpi', async (req, res) => {
             m['Total Perangkat'] = qualifiedAssets.length;
         });
 
-        // Fetch overrides
-        const overrides = await db('kpi_overrides')
-            .where({ type: 'maintenance', year });
-
+        // Apply non-zero manual overrides (never let stale 0 wipe real DB records)
+        const overrides = await activeDb('kpi_overrides').where({ type: 'maintenance', year });
         overrides.forEach(ov => {
             const mIdx = ov.month - 1;
-            if (mIdx >= 0 && mIdx < 12) {
-                monthlyData[mIdx][ov.metric] = isNaN(ov.value) ? ov.value : Number(ov.value);
+            const numVal = Number(ov.value);
+            if (mIdx >= 0 && mIdx < 12 && !monthlyData[mIdx].isFuture && !Number.isNaN(numVal)) {
+                if (ov.metric === 'actual' && numVal === 0 && monthlyData[mIdx].actual > 0) return;
+                if (ov.metric === 'target' && numVal === 0 && monthlyData[mIdx].target > 0) return;
+                if (numVal > 0 || ov.metric === 'Total Perangkat') {
+                    monthlyData[mIdx][ov.metric] = numVal;
+                }
             }
         });
 
         res.json({
-            // Expose the raw qualified asset count, but the real table uses the per-month overridden value
             totalAssetsQualified: qualifiedAssets.length,
             monthly: monthlyData.map(m => {
                 const totalAssetsUsed = m['Total Perangkat'] || qualifiedAssets.length;
                 return {
                     month: m.month,
                     'Total Perangkat': totalAssetsUsed,
-                    target: m.target,
-                    actual: m.actual,
-                    // Percentage based on Target
-                    percentage: m.target > 0 ? ((m.actual / m.target) * 100).toFixed(2) : "0.00"
+                    target: m.isFuture ? 0 : m.target,
+                    actual: m.isFuture ? 0 : m.actual,
+                    isFuture: m.isFuture,
+                    isCurrent: m.isCurrent,
+                    percentage: !m.isFuture && m.target > 0 ? ((m.actual / m.target) * 100).toFixed(2) : "0.00"
                 };
             })
         });
@@ -179,7 +233,7 @@ router.get('/', async (req, res) => {
                 'assets.name as asset_name',
                 'assets.inventory_number',
                 db.raw('COALESCE(hr2.name, hr1.name, users.name) as user_name'),
-                db.raw('COALESCE(hr2.department, hr1.department, users.department) as user_department'),
+                db.raw("COALESCE(NULLIF(TRIM(assets.department), ''), NULLIF(NULLIF(TRIM(hr2.department), ''), 'General'), NULLIF(NULLIF(TRIM(hr1.department), ''), 'General'), NULLIF(NULLIF(TRIM(users.department), ''), 'General'), NULLIF(NULLIF(TRIM(assets.location), ''), 'Unknown')) as user_department"),
                 'assets.location'
             )
             .orderBy('maintenance_plans.year', 'desc')
@@ -219,7 +273,7 @@ router.get('/', async (req, res) => {
 
 // GET /api/maintenance/schedule?year=2025&semester=1&type=Semester
 router.get('/schedule', async (req, res) => {
-    const { year, semester, type = 'Semester' } = req.query;
+    const { year, semester, type = 'Semester', scope = 'all' } = req.query;
     try {
         const assets = await db('assets')
             .leftJoin('users', 'assets.user_id', 'users.id')
@@ -232,7 +286,7 @@ router.get('/schedule', async (req, res) => {
                 'assets.category', 
                 'assets.manufacturer', 
                 db.raw('COALESCE(hr2.name, hr1.name, users.name) as user_name'),
-                db.raw('COALESCE(hr2.department, hr1.department, users.department) as user_department'), 
+                db.raw("COALESCE(NULLIF(TRIM(assets.department), ''), NULLIF(NULLIF(TRIM(hr2.department), ''), 'General'), NULLIF(NULLIF(TRIM(hr1.department), ''), 'General'), NULLIF(NULLIF(TRIM(users.department), ''), 'General'), NULLIF(NULLIF(TRIM(assets.location), ''), 'Unknown')) as user_department"), 
                 'assets.contact', 
                 'assets.location'
             );
@@ -244,15 +298,14 @@ router.get('/schedule', async (req, res) => {
 
         // Fetch existing plans for this period and allowed types (this tier and higher)
         const plansQuery = db('maintenance_plans').where({ year }).whereIn('maintenance_type', allowedTiers);
-        if (semester !== 'all') {
+        if (semester && semester !== 'all') {
             plansQuery.where('semester', semester);
         }
         let plansRaw = await plansQuery.select('*');
 
         // Automatically ensure any un-planned qualified assets have maintenance plans
         const unPlannedAssets = assets.filter(a => {
-            const cat = (a.category || '').toLowerCase();
-            if (cat === 'monitor') return false;
+            if (isMonitorAsset(a)) return false;
             return !plansRaw.some(p => p.asset_id === a.id);
         });
 
@@ -290,7 +343,7 @@ router.get('/schedule', async (req, res) => {
             try {
                 await db('maintenance_plans').insert(autoPlans);
                 const reFetched = await db('maintenance_plans').where({ year }).whereIn('maintenance_type', allowedTiers);
-                if (semester !== 'all') {
+                if (semester && semester !== 'all') {
                     plansRaw = reFetched.filter(p => Number(p.semester) === Number(semester));
                 } else {
                     plansRaw = reFetched;
@@ -300,37 +353,49 @@ router.get('/schedule', async (req, res) => {
             }
         }
 
-        // Fetch records for this year and allowed types (this tier and higher)
+        // Fetch ALL records for this year so completed checksheets saved under any tier (Daily/Weekly/Monthly/Semester) remain visible
         const recordsRaw = await db('maintenance_records')
-            .whereIn('maintenance_type', allowedTiers)
             .where('year', year)
             .select('*');
+
+        const semNum = (semester && semester !== 'all') ? Number(semester) : null;
+        const isKeyInSemester = (wk) => {
+            if (!wk || !semNum) return true;
+            const m = parseInt(String(wk).split('_')[0], 10);
+            if (Number.isNaN(m)) return true;
+            return semNum === 1 ? (m >= 1 && m <= 6) : (m >= 7 && m <= 12);
+        };
 
         // Map plans and records to assets
         const schedule = assets
             .filter(asset => {
-                const cat = (asset.category || '').toLowerCase();
-                return cat !== 'monitor';
+                if (isMonitorAsset(asset)) return false;
+                if (scope === 'it' || scope === 'kpi') return !isCctvAsset(asset);
+                if (scope === 'cctv') return isCctvAsset(asset);
+                return true;
             })
             .map(asset => {
                 // Merge multiple plans into one for this asset (Hierarchical)
                 const assetPlans = plansRaw.filter(p => p.asset_id === asset.id);
                 let mergedPlan = null;
                 if (assetPlans.length > 0) {
-                    // Sort by tier ascending (Daily -> Semester) so higher tiers override/merge on top
                     assetPlans.sort((a, b) => tiers.indexOf(a.maintenance_type) - tiers.indexOf(b.maintenance_type));
-                    mergedPlan = { ...assetPlans[assetPlans.length - 1] }; // Base on highest tier found
+                    mergedPlan = { ...assetPlans[assetPlans.length - 1] };
 
-                    // Merge planning_data and actual_data from all tiers
                     let combinedPlanning = {};
                     let combinedActual = {};
                     assetPlans.forEach(p => {
-                        try {
-                            const pData = typeof p.planning_data === 'string' ? JSON.parse(p.planning_data || '{}') : (p.planning_data || {});
-                            combinedPlanning = { ...combinedPlanning, ...pData };
-                            const aData = typeof p.actual_data === 'string' ? JSON.parse(p.actual_data || '{}') : (p.actual_data || {});
-                            combinedActual = { ...combinedActual, ...aData };
-                        } catch (e) { }
+                        const pData = parseJsonSafe(p.planning_data);
+                        Object.keys(pData).forEach(k => {
+                            if (pData[k]) combinedPlanning[k] = true;
+                        });
+                        const aData = parseJsonSafe(p.actual_data);
+                        Object.keys(aData).forEach(k => {
+                            // Guard against stale cross-semester keys (e.g. 1_1 inside Semester 2 actual_data)
+                            if (aData[k] && isKeyInSemester(k)) {
+                                combinedActual[k] = true;
+                            }
+                        });
                     });
                     mergedPlan.planning_data = combinedPlanning;
                     mergedPlan.actual_data = combinedActual;
@@ -338,19 +403,40 @@ router.get('/schedule', async (req, res) => {
 
                 const assetRecords = recordsRaw.filter(r => r.asset_id === asset.id);
 
-                // Convert records array to a map keyed by week_key for easy lookup
-                // Sort by tier index so higher tiers overwrite lower ones in the map
+                // Sort ascending by tier + date so allowed/higher-tier records take priority in recordsMap
                 const recordsMap = {};
                 assetRecords
-                    .sort((a, b) => tiers.indexOf(a.maintenance_type) - tiers.indexOf(b.maintenance_type))
+                    .sort((a, b) => {
+                        const aAllowed = allowedTiers.includes(a.maintenance_type) ? 1 : 0;
+                        const bAllowed = allowedTiers.includes(b.maintenance_type) ? 1 : 0;
+                        if (aAllowed !== bAllowed) return aAllowed - bAllowed;
+                        return tiers.indexOf(a.maintenance_type) - tiers.indexOf(b.maintenance_type);
+                    })
                     .forEach(r => {
                         if (r.week_key) {
                             recordsMap[r.week_key] = r;
+                            // Authoritatively sync completed maintenance_records into actual_data for UI visibility
+                            if ((r.status === 'Completed' || r.condition_after) && isKeyInSemester(r.week_key)) {
+                                if (!mergedPlan) {
+                                    mergedPlan = {
+                                        id: null,
+                                        asset_id: asset.id,
+                                        year: Number(year),
+                                        semester: semNum || 1,
+                                        planning_data: {},
+                                        actual_data: {}
+                                    };
+                                }
+                                mergedPlan.actual_data[r.week_key] = true;
+                            }
                         }
                     });
 
                 return {
-                    asset,
+                    asset: {
+                        ...asset,
+                        is_cctv: isCctvAsset(asset)
+                    },
                     plan: mergedPlan,
                     records: recordsMap
                 };
@@ -497,20 +583,63 @@ router.put('/plan/:id', async (req, res) => {
     }
 });
 
+// Helper to sync completed week_key into maintenance_plans.actual_data reliably
+async function syncPlanActualData(trx, { plan_id, asset_id, year, week_key }) {
+    if (!week_key || !asset_id || !year) return;
+    const weekMonth = parseInt(String(week_key).split('_')[0], 10);
+    const targetSemester = (!Number.isNaN(weekMonth) && weekMonth >= 7) ? 2 : 1;
+
+    let plan = null;
+    if (plan_id && !Number.isNaN(Number(plan_id))) {
+        plan = await trx('maintenance_plans').where({ id: Number(plan_id), asset_id: Number(asset_id) }).first();
+    }
+    if (!plan) {
+        plan = await trx('maintenance_plans')
+            .where({ asset_id: Number(asset_id), year: Number(year), semester: targetSemester, maintenance_type: 'Semester' })
+            .first();
+    }
+
+    if (plan) {
+        const actualData = parseJsonSafe(plan.actual_data);
+        actualData[week_key] = true;
+        await trx('maintenance_plans').where({ id: plan.id }).update({
+            actual_data: JSON.stringify(actualData),
+            updated_at: new Date()
+        });
+    } else {
+        await trx('maintenance_plans').insert({
+            asset_id: Number(asset_id),
+            year: Number(year),
+            semester: targetSemester,
+            maintenance_type: 'Semester',
+            planning_data: JSON.stringify({ [week_key]: true }),
+            actual_data: JSON.stringify({ [week_key]: true }),
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+    }
+}
+
 // POST /api/maintenance/record/upsert - Update or Create record (for quick status/condition changes)
 router.post('/record/upsert', async (req, res) => {
     const trx = await db.transaction();
     try {
-        const { asset_id, week_key, year, condition_before, condition_after, status, maintenance_date, pic_name, department, maintenance_type = 'Semester', checked_by, checked_at, approved_by, approved_at } = req.body;
+        const { asset_id, week_key, year, condition_before, condition_after, status, maintenance_date, pic_name, department, maintenance_type = 'Semester', checked_by, checked_at, approved_by, approved_at, plan_id } = req.body;
+        const parsedAssetId = parseInt(asset_id, 10);
+        if (Number.isNaN(parsedAssetId)) {
+            await trx.rollback();
+            return res.status(400).json({ error: 'Invalid asset_id' });
+        }
+        const resolvedYear = year ? Number(year) : new Date(maintenance_date || Date.now()).getFullYear();
+        const resolvedWeekKey = week_key || deriveWeekKeyFromDate(maintenance_date);
 
         // Check if record exists
         let record = await trx('maintenance_records')
-            .where({ asset_id, week_key, year, maintenance_type })
+            .where({ asset_id: parsedAssetId, week_key: resolvedWeekKey, year: resolvedYear, maintenance_type })
             .first();
 
         let id;
         if (record) {
-            // Update
             await trx('maintenance_records')
                 .where({ id: record.id })
                 .update({
@@ -525,11 +654,10 @@ router.post('/record/upsert', async (req, res) => {
                 });
             id = record.id;
         } else {
-            // Create
-            const [newId] = await trx('maintenance_records').insert({
-                asset_id,
-                week_key,
-                year,
+            const insertResult = await trx('maintenance_records').insert({
+                asset_id: parsedAssetId,
+                week_key: resolvedWeekKey,
+                year: resolvedYear,
                 maintenance_date: maintenance_date || new Date(),
                 maintenance_type: maintenance_type,
                 pic_name: pic_name || 'System',
@@ -544,8 +672,12 @@ router.post('/record/upsert', async (req, res) => {
                 checksheet_data: JSON.stringify({}),
                 created_at: new Date(),
                 updated_at: new Date()
-            });
-            id = newId;
+            }).returning('id');
+            id = insertResult[0]?.id || insertResult[0];
+        }
+
+        if (status === 'Completed' || (condition_after && condition_after !== '-')) {
+            await syncPlanActualData(trx, { plan_id, asset_id: parsedAssetId, year: resolvedYear, week_key: resolvedWeekKey });
         }
 
         await trx.commit();
@@ -561,28 +693,34 @@ router.post('/record/upsert', async (req, res) => {
 router.post('/record', async (req, res) => {
     const trx = await db.transaction();
     try {
-        const { asset_id, maintenance_date, pic_name, department, condition_before, condition_after, status, checksheet_data, plan_id, week_key, maintenance_type = 'Semester', checked_by, checked_at, approved_by, approved_at } = req.body;
+        const { asset_id, maintenance_date, pic_name, department, condition_before, condition_after, status = 'Completed', checksheet_data, plan_id, week_key, maintenance_type = 'Semester', checked_by, checked_at, approved_by, approved_at, year: reqYear } = req.body;
 
-        const year = new Date(maintenance_date).getFullYear();
+        const parsedAssetId = parseInt(asset_id, 10);
+        if (Number.isNaN(parsedAssetId)) {
+            await trx.rollback();
+            return res.status(400).json({ error: 'Invalid asset_id' });
+        }
+
+        const year = reqYear ? Number(reqYear) : new Date(maintenance_date || Date.now()).getFullYear();
+        const resolvedWeekKey = week_key || deriveWeekKeyFromDate(maintenance_date);
 
         // Check if record exists
         let record = await trx('maintenance_records')
-            .where({ asset_id, week_key, year, maintenance_type })
+            .where({ asset_id: parsedAssetId, week_key: resolvedWeekKey, year, maintenance_type })
             .first();
 
         let id;
         if (record) {
-            // Update
             await trx('maintenance_records')
                 .where({ id: record.id })
                 .update({
-                    maintenance_date,
-                    pic_name,
-                    department,
-                    condition_before,
-                    condition_after,
-                    status,
-                    checksheet_data: JSON.stringify(checksheet_data),
+                    maintenance_date: maintenance_date || record.maintenance_date,
+                    pic_name: pic_name || record.pic_name,
+                    department: department || record.department,
+                    condition_before: condition_before !== undefined ? condition_before : record.condition_before,
+                    condition_after: condition_after !== undefined ? condition_after : record.condition_after,
+                    status: status || 'Completed',
+                    checksheet_data: JSON.stringify(checksheet_data || {}),
                     checked_by: checked_by !== undefined ? checked_by : record.checked_by,
                     checked_at: checked_at !== undefined ? checked_at : record.checked_at,
                     approved_by: approved_by !== undefined ? approved_by : record.approved_by,
@@ -591,22 +729,21 @@ router.post('/record', async (req, res) => {
                 });
             id = record.id;
         } else {
-            // Insert
             const insertResult = await trx('maintenance_records').insert({
-                asset_id,
-                maintenance_date,
+                asset_id: parsedAssetId,
+                maintenance_date: maintenance_date || new Date(),
                 maintenance_type,
-                pic_name,
-                department,
-                condition_before,
-                condition_after,
-                status,
+                pic_name: pic_name || 'System',
+                department: department || 'IT',
+                condition_before: condition_before || '',
+                condition_after: condition_after || '',
+                status: status || 'Completed',
                 checked_by: checked_by || null,
                 checked_at: checked_at || null,
                 approved_by: approved_by || null,
                 approved_at: approved_at || null,
-                checksheet_data: JSON.stringify(checksheet_data),
-                week_key,
+                checksheet_data: JSON.stringify(checksheet_data || {}),
+                week_key: resolvedWeekKey,
                 year,
                 created_at: new Date(),
                 updated_at: new Date()
@@ -614,26 +751,11 @@ router.post('/record', async (req, res) => {
             id = insertResult[0]?.id || insertResult[0];
         }
 
-        // Auto-update Plan Status if linked
-        if (plan_id && week_key) {
-            const plan = await trx('maintenance_plans').where({ id: plan_id }).first();
-            if (plan) {
-                let actualData = {};
-                try {
-                    actualData = JSON.parse(plan.actual_data || '{}');
-                } catch (e) { }
-
-                actualData[week_key] = true; // Mark distinct week as done
-
-                await trx('maintenance_plans').where({ id: plan_id }).update({
-                    actual_data: JSON.stringify(actualData),
-                    updated_at: new Date()
-                });
-            }
-        }
+        // Always update Plan actual_data when checksheet is submitted (even if plan_id wasn't passed or was from Monthly/Weekly/Daily)
+        await syncPlanActualData(trx, { plan_id, asset_id: parsedAssetId, year, week_key: resolvedWeekKey });
 
         await trx.commit();
-        res.status(201).json({ id, message: 'Maintenance record saved & Plan updated' });
+        res.status(201).json({ id, week_key: resolvedWeekKey, year, message: 'Maintenance record saved & Plan updated' });
     } catch (err) {
         await trx.rollback();
         console.error('Error saving record:', err);
@@ -644,23 +766,28 @@ router.post('/record', async (req, res) => {
 // GET /api/maintenance/record - Fetch specific record
 router.get('/record', async (req, res) => {
     const { asset_id, week_key, year, maintenance_type = 'Semester' } = req.query;
+    const parsedAssetId = parseInt(asset_id, 10);
+    if (Number.isNaN(parsedAssetId) || !week_key) {
+        return res.json(null);
+    }
     try {
         const tiers = ['Daily', 'Weekly', 'Monthly', 'Semester'];
         const currentTierIdx = tiers.indexOf(maintenance_type);
         const allowedTiers = currentTierIdx === -1 ? [maintenance_type] : tiers.slice(currentTierIdx);
 
-        const record = await db('maintenance_records')
-            .where({ asset_id, week_key, year })
-            .whereIn('maintenance_type', allowedTiers)
-            .then(rows => {
-                // Return the best (highest level) record
-                return rows.sort((a, b) => tiers.indexOf(b.maintenance_type) - tiers.indexOf(a.maintenance_type))[0];
-            });
-        if (record) {
-            res.json(record);
-        } else {
-            res.json(null);
+        const rows = await db('maintenance_records')
+            .where({ asset_id: parsedAssetId, week_key, year });
+
+        let record = rows
+            .filter(r => allowedTiers.includes(r.maintenance_type))
+            .sort((a, b) => tiers.indexOf(b.maintenance_type) - tiers.indexOf(a.maintenance_type))[0];
+
+        // Fallback across tiers so checksheets saved under Daily/Weekly/Monthly are still retrievable
+        if (!record && rows.length > 0) {
+            record = rows.sort((a, b) => tiers.indexOf(b.maintenance_type) - tiers.indexOf(a.maintenance_type))[0];
         }
+
+        res.json(record || null);
     } catch (err) {
         console.error('Error fetching record:', err);
         res.status(500).json({ error: 'Failed to fetch record' });

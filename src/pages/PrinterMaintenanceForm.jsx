@@ -125,8 +125,14 @@ export default function PrinterMaintenanceForm({ asset, formData: propFormData, 
             } else if (role === 'Manager') {
                 setStatus('Done');
                 alert('Approved by Section Head!');
-                if (onSubmit) onSubmit(dataToSubmit);
-                navigate('/ict/maintenance');
+                if (onSubmit) {
+                    onSubmit(dataToSubmit);
+                } else {
+                    const sp = new URLSearchParams(window.location.search);
+                    const retTab = sp.get('returnTab') || 'year';
+                    const retScope = sp.get('scope') ? `&scope=${sp.get('scope')}` : '';
+                    navigate(`/ict/maintenance?tab=${retTab}${retScope}`);
+                }
             }
         }, 500);
     };

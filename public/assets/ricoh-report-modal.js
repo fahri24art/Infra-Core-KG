@@ -18,16 +18,15 @@
     return '';
   }
 
-  // Active Organization / Plant helper (SG vs KG)
+  // Active Organization / Plant helper (SG only on Server 66)
   function getCurrentOrg() {
-    try {
-      const user = JSON.parse(sessionStorage.getItem('user') || '{}');
-      if (user && user.role && !['super_user', 'superuser', 'administrator', 'admin'].includes(user.role.toLowerCase()) && user.organization) {
-        return user.organization;
-      }
-    } catch (e) {}
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('org') || sessionStorage.getItem('organization') || localStorage.getItem('organization') || 'TCF-SG';
+    return 'TCF-KG';
+  }
+
+  function isRicohPage() {
+    var path = ((window.location && window.location.pathname) || '').toLowerCase();
+    if (!path.includes('ricoh') || path.startsWith('/public')) return false;
+    return Boolean(getAuthToken());
   }
 
   // Inject Modal Root if missing
@@ -446,18 +445,9 @@
       return;
     }
 
-    // Check if clicked computer name link
-    const link = target.closest('a[title*="Power Asset"], a[title*="Inventory"], a[href*="/ict/assets/"]');
-    if (link) {
-      // Allow opening report directly by clicking on device name
-      const compName = link.innerText.trim();
-      if (compName && compName.length >= 2) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.openRicohUserReport(compName);
-        return;
-      }
-    }
+    // Only intercept Ricoh table clicks on Ricoh pages, and never hijack normal Power Asset links
+    if (!isRicohPage()) return;
+    if (target.closest('a[href*="/ict/assets/"]')) return;
 
     // Check if clicked on a table row's device name or user cell
     const cell = target.closest('td');
@@ -480,8 +470,9 @@
     }
   });
 
-  // Dynamic Row Enhancer: Injects a sleek [📊 Laporan] button into Controls column of every row
+  // Dynamic Row Enhancer: Injects a sleek [📊 Laporan] button into Controls column of every row (Ricoh pages only)
   function enhanceRicohTableRows() {
+    if (!isRicohPage()) return;
     try {
       const rows = document.querySelectorAll('table tbody tr');
       rows.forEach(tr => {

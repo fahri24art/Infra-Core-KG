@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { 
-    Edit2, Save, X, Download, Printer, RefreshCw, 
-    CheckCircle2, AlertTriangle, XCircle, FileSpreadsheet, ShieldCheck, Sparkles 
+import {
+    Edit2, Save, X, Download, Printer, RefreshCw,
+    CheckCircle2, AlertTriangle, XCircle, FileSpreadsheet, ShieldCheck, Sparkles, Info
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { KpiIncidentModal } from './KPILocalTab';
 
 const MONTH_NAMES = [
     'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
@@ -19,10 +20,13 @@ export default function KPIScorecardTable({
     digitalizationData = [], 
     reviewIkData = [],
     onSaveOverride,
-    onRefresh
+    onRefresh,
+    onToggleExcludeTicket
 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [modalCtx, setModalCtx] = useState(null);
+    const [metaMatrix, setMetaMatrix] = useState({});
 
     // Initial definition of the 6 KPIs based on the ICT Management Matrix
     const initialKpis = [
@@ -119,20 +123,31 @@ export default function KPIScorecardTable({
     useEffect(() => {
         const buildInitialMatrix = () => {
             const nextState = {};
+            const nextMeta = {};
+            const now = new Date();
+            const curYear = now.getFullYear();
+            const curMonth = now.getMonth() + 1;
 
             initialKpis.forEach(kpi => {
                 const planArr = Array(12).fill(0);
                 const actualArr = Array(12).fill(0);
+                const metaArr = Array.from({ length: 12 }, (_, m) => ({
+                    isFuture: year > curYear || (year === curYear && (m + 1) > curMonth),
+                    isCurrent: year === curYear && (m + 1) === curMonth,
+                    incidents: [],
+                    downtime_minutes: 0,
+                    incident_count: 0,
+                    source: 'auto',
+                }));
 
                 let sourceData = [];
                 if (kpi.id === 'digitalization') sourceData = digitalizationData;
                 else if (kpi.id === 'uptime_server') sourceData = uptimeData;
                 else if (kpi.id === 'uptime_network') {
-                    // Combine iforte + comnet or uptime_minutes
                     sourceData = ispData.map(d => ({
                         ...d,
-                        uptime_minutes: d.uptime_minutes !== undefined 
-                            ? d.uptime_minutes 
+                        uptime_minutes: d.uptime_minutes !== undefined
+                            ? d.uptime_minutes
                             : Math.round(((d.iforte_uptime || 0) + (d.comnet_uptime || 0)) / 2)
                     }));
                 }
@@ -147,28 +162,30 @@ export default function KPIScorecardTable({
                         if (mIdx >= 0 && mIdx < 12) {
                             planArr[mIdx] = item[kpi.planKey] !== undefined ? Number(item[kpi.planKey]) : 0;
                             actualArr[mIdx] = item[kpi.actualKey] !== undefined ? Number(item[kpi.actualKey]) : 0;
+                            metaArr[mIdx] = {
+                                ...metaArr[mIdx],
+                                isFuture: item.isFuture !== undefined ? Boolean(item.isFuture) : metaArr[mIdx].isFuture,
+                                isCurrent: item.isCurrent !== undefined ? Boolean(item.isCurrent) : metaArr[mIdx].isCurrent,
+                                incidents: item.incidents || [],
+                                downtime_minutes: item.downtime_minutes || 0,
+                                incident_count: item.incident_count || 0,
+                                total_minutes: item.total_minutes ?? planArr[mIdx],
+                                percentage: item.percentage || '0.00',
+                                source: item.source || 'auto',
+                            };
                         }
                     });
                 }
 
-                // Default fallbacks for fresh months if 0
-                if (kpi.id === 'uptime_server' || kpi.id === 'uptime_network') {
-                    // standard month working minutes: days * 1440
-                    for (let m = 0; m < 12; m++) {
-                        if (planArr[m] === 0) {
-                            const days = new Date(year, m + 1, 0).getDate();
-                            planArr[m] = days * 24 * 60;
-                        }
-                    }
-                }
+                // Default plan values ONLY for non-future months that lack explicit plans
                 if (kpi.id === 'review_ik') {
                     for (let m = 0; m < 12; m++) {
-                        if (planArr[m] === 0) planArr[m] = 4;
+                        if (!metaArr[m].isFuture && planArr[m] === 0) planArr[m] = 4;
                     }
                 }
                 if (kpi.id === 'digitalization') {
                     for (let m = 0; m < 12; m++) {
-                        if (planArr[m] === 0) planArr[m] = 1;
+                        if (!metaArr[m].isFuture && planArr[m] === 0) planArr[m] = 1;
                     }
                 }
 
@@ -176,12 +193,15 @@ export default function KPIScorecardTable({
                     plan: planArr,
                     actual: actualArr
                 };
+                nextMeta[kpi.id] = metaArr;
             });
 
-            return nextState;
+            return { nextState, nextMeta };
         };
 
-        setMatrixState(buildInitialMatrix());
+        const { nextState, nextMeta } = buildInitialMatrix();
+        setMatrixState(nextState);
+        setMetaMatrix(nextMeta);
     }, [year, uptimeData, ispData, maintenanceData, ticketsData, digitalizationData, reviewIkData]);
 
     // Handle inline input change
@@ -210,21 +230,21 @@ export default function KPIScorecardTable({
         return Number(pct.toFixed(2));
     };
 
-    // Calculate YTD Average % for a KPI
+    // Calculate YTD Average % for a KPI (excludes future months)
     const calcYtdPct = (kpiId) => {
         const kpi = matrixState[kpiId];
+        const meta = metaMatrix[kpiId] || [];
         if (!kpi) return 0;
         let totalPlan = 0;
         let totalActual = 0;
-        let activeMonths = 0;
 
         for (let i = 0; i < 12; i++) {
+            if (meta[i]?.isFuture) continue;
             const p = Number(kpi.plan[i]) || 0;
             const a = Number(kpi.actual[i]) || 0;
             if (p > 0 || a > 0) {
                 totalPlan += p;
                 totalActual += a;
-                activeMonths++;
             }
         }
         if (totalPlan <= 0) return 0;
@@ -239,19 +259,28 @@ export default function KPIScorecardTable({
         return Number((sum / scores.length).toFixed(2));
     };
 
-    // Save changes to backend
+    // Save changes to backend (skip future months & skip 0s for auto-computed metrics)
     const handleSaveAll = async () => {
         setIsSaving(true);
         try {
             for (const kpi of initialKpis) {
                 const kpiData = matrixState[kpi.id];
+                const meta = metaMatrix[kpi.id] || [];
                 if (!kpiData) continue;
 
+                const isAutoMetric = ['uptime_server', 'uptime_network', 'preventive', 'tickets'].includes(kpi.id);
                 const payload = [];
                 for (let m = 0; m < 12; m++) {
+                    if (meta[m]?.isFuture) continue;
                     const monthNum = m + 1;
                     const pVal = Number(kpiData.plan[m]) || 0;
                     const aVal = Number(kpiData.actual[m]) || 0;
+                    if (isAutoMetric && aVal === 0 && pVal === 0) continue;
+
+                    // Do not accidentally lock live Kuma/ticket actuals as manual overrides if unchanged
+                    if (isAutoMetric && meta[m]?.source !== 'manual_override' && aVal === Number(meta[m]?.total_minutes ? (meta[m].total_minutes - meta[m].downtime_minutes) : aVal)) {
+                        continue;
+                    }
 
                     const rowObj = {
                         month: monthNum,
@@ -261,7 +290,7 @@ export default function KPIScorecardTable({
                     payload.push(rowObj);
                 }
 
-                if (onSaveOverride) {
+                if (payload.length > 0 && onSaveOverride) {
                     await onSaveOverride(kpi.type, payload);
                 }
             }
@@ -447,23 +476,22 @@ export default function KPIScorecardTable({
                 </div>
             </div>
 
-            {/* Matrix Table */}
-            <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left font-sans text-xs">
+            {/* Matrix Table - 1-Page Compact Responsive Fit */}
+            <div className="overflow-x-auto w-full custom-scrollbar">
+                <table className="w-full border-collapse text-left font-sans text-[11px]">
                     <thead>
-                        <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-600 text-[11px] font-black uppercase tracking-wider">
-                            <th className="py-3 px-3 w-10 text-center border-r border-slate-200">No</th>
-                            <th className="py-3 px-4 min-w-[240px] border-r border-slate-200">Key Performance Indicator</th>
-                            <th className="py-3 px-3 w-28 text-center border-r border-slate-200">Target</th>
-                            <th className="py-3 px-3 w-16 text-center border-r border-slate-200">Satuan</th>
-                            <th className="py-3 px-3 w-24 border-r border-slate-200">Row</th>
+                        <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-tight whitespace-nowrap">
+                            <th className="py-2.5 px-1.5 w-7 text-center border-r border-slate-200">No</th>
+                            <th className="py-2.5 px-2.5 w-[170px] border-r border-slate-200">Key Performance Indicator</th>
+                            <th className="py-2.5 px-1.5 text-center border-r border-slate-200">Target</th>
+                            <th className="py-2.5 px-1.5 border-r border-slate-200">Row</th>
                             {MONTH_NAMES.map(m => (
-                                <th key={m} className="py-3 px-2 text-center w-14 border-r border-slate-200">
+                                <th key={m} className="py-2.5 px-0.5 text-center border-r border-slate-200">
                                     {m}
                                 </th>
                             ))}
-                            <th className="py-3 px-3 text-center w-24 border-r border-slate-200">YTD / Avg</th>
-                            <th className="py-3 px-3 text-center w-24">Status</th>
+                            <th className="py-2.5 px-1.5 text-center border-r border-slate-200">YTD</th>
+                            <th className="py-2.5 px-1.5 text-center">Status</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
@@ -477,44 +505,49 @@ export default function KPIScorecardTable({
                                 <React.Fragment key={kpi.id}>
                                     {/* Row 1: Plan (P) */}
                                     <tr className="hover:bg-slate-50/60 transition-colors">
-                                        <td rowSpan={3} className="py-3 px-3 text-center font-bold text-slate-700 border-r border-b border-slate-200 bg-slate-50/30 align-top pt-4">
+                                        <td rowSpan={3} className="py-2 px-1 text-center font-bold text-slate-700 border-r border-b border-slate-200 bg-slate-50/30 align-top pt-3">
                                             {kpi.no}
                                         </td>
-                                        <td rowSpan={3} className="py-3 px-4 border-r border-b border-slate-200 bg-slate-50/30 align-top pt-4">
-                                            <div className="font-bold text-slate-900 leading-snug">{kpi.title}</div>
-                                            <div className="text-[10px] text-slate-400 mt-1 font-mono">{kpi.formula}</div>
+                                        <td rowSpan={3} className="py-2 px-2 border-r border-b border-slate-200 bg-slate-50/30 align-top pt-3 max-w-[180px]">
+                                            <div className="font-bold text-slate-900 leading-tight text-[11px]">{kpi.title}</div>
+                                            <div className="text-[9px] text-slate-400 mt-0.5 font-mono leading-tight">{kpi.formula}</div>
                                         </td>
-                                        <td rowSpan={3} className="py-3 px-3 text-center font-bold text-slate-700 border-r border-b border-slate-200 bg-slate-50/30 align-middle">
-                                            <span className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 font-black text-[11px] border border-blue-200/60">
+                                        <td rowSpan={3} className="py-2 px-1 text-center font-bold text-slate-700 border-r border-b border-slate-200 bg-slate-50/30 align-middle whitespace-nowrap">
+                                            <span className="inline-block px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-black text-[10px] border border-blue-200/60">
                                                 {kpi.targetDisplay}
                                             </span>
+                                            <div className="text-[9px] text-slate-400 font-medium mt-0.5">{kpi.unit}</div>
                                         </td>
-                                        <td rowSpan={3} className="py-3 px-3 text-center text-slate-500 font-medium border-r border-b border-slate-200 bg-slate-50/30 align-middle">
-                                            {kpi.unit}
+                                        <td className="py-1.5 px-1.5 font-bold text-[10px] text-slate-600 border-r border-slate-200 bg-slate-50/50 whitespace-nowrap">
+                                            <div className="flex items-center justify-between gap-1">
+                                                <span>Plan</span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
+                                            </div>
                                         </td>
-                                        <td className="py-2.5 px-3 font-bold text-slate-600 border-r border-slate-200 bg-slate-50/50 flex items-center justify-between">
-                                            <span>Plan (P)</span>
-                                            <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                                        </td>
-                                        {MONTH_NAMES.map((_, mIdx) => (
-                                            <td key={`p-${mIdx}`} className="py-2 px-1 text-center font-mono border-r border-slate-200 text-slate-600">
+                                        {MONTH_NAMES.map((_, mIdx) => {
+                                            const mMeta = (metaMatrix[kpi.id] || [])[mIdx] || {};
+                                            return (
+                                            <td key={`p-${mIdx}`} className="py-1.5 px-0.5 text-center font-mono tabular-nums text-[10px] border-r border-slate-200 text-slate-600 whitespace-nowrap">
                                                 {isEditing ? (
                                                     <input
                                                         type="number"
                                                         value={kpiData.plan[mIdx] !== undefined ? kpiData.plan[mIdx] : ''}
                                                         onChange={(e) => handleCellChange(kpi.id, 'plan', mIdx, e.target.value)}
-                                                        className="w-12 px-1 py-1 text-center font-bold font-mono text-slate-800 bg-blue-50/50 border border-blue-300 rounded focus:ring-1 focus:ring-blue-500 outline-none text-xs"
+                                                        className="w-11 px-0.5 py-0.5 text-center font-bold font-mono text-slate-800 bg-blue-50/50 border border-blue-300 rounded focus:ring-1 focus:ring-blue-500 outline-none text-[10px]"
                                                     />
+                                                ) : mMeta.isFuture ? (
+                                                    <span className="text-slate-300">-</span>
                                                 ) : (
                                                     typeof kpiData.plan[mIdx] === 'number' ? kpiData.plan[mIdx].toLocaleString() : kpiData.plan[mIdx]
                                                 )}
                                             </td>
-                                        ))}
-                                        <td className="py-2.5 px-2 text-center font-bold font-mono text-slate-700 border-r border-slate-200 bg-slate-50/30">
-                                            {kpiData.plan.reduce((a, b) => Number(a) + Number(b), 0).toLocaleString()}
+                                            );
+                                        })}
+                                        <td className="py-1.5 px-1 text-center font-bold font-mono tabular-nums text-[10px] text-slate-700 border-r border-slate-200 bg-slate-50/30 whitespace-nowrap">
+                                            {kpiData.plan.reduce((a, b, idx) => (metaMatrix[kpi.id]?.[idx]?.isFuture ? a : a + (Number(b) || 0)), 0).toLocaleString()}
                                         </td>
-                                        <td rowSpan={3} className="py-3 px-3 text-center border-b border-slate-200 align-middle">
-                                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                        <td rowSpan={3} className="py-2 px-1 text-center border-b border-slate-200 align-middle whitespace-nowrap">
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tight whitespace-nowrap ${
                                                 isMet ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                                                 isWarning ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                                                 'bg-rose-50 text-rose-700 border border-rose-200'
@@ -526,46 +559,69 @@ export default function KPIScorecardTable({
 
                                     {/* Row 2: Actual (A) */}
                                     <tr className="hover:bg-slate-50/60 transition-colors">
-                                        <td className="py-2.5 px-3 font-bold text-slate-600 border-r border-slate-200 bg-slate-50/50 flex items-center justify-between">
-                                            <span>Actual (A)</span>
-                                            <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                                        <td className="py-1.5 px-1.5 font-bold text-[10px] text-slate-600 border-r border-slate-200 bg-slate-50/50 whitespace-nowrap">
+                                            <div className="flex items-center justify-between gap-1">
+                                                <span>Actual</span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0"></span>
+                                            </div>
                                         </td>
-                                        {MONTH_NAMES.map((_, mIdx) => (
-                                            <td key={`a-${mIdx}`} className="py-2 px-1 text-center font-mono border-r border-slate-200 text-blue-700 font-bold">
+                                        {MONTH_NAMES.map((_, mIdx) => {
+                                            const mMeta = (metaMatrix[kpi.id] || [])[mIdx] || {};
+                                            const hasAuditDrilldown = (kpi.id === 'uptime_server' || kpi.id === 'uptime_network') && !mMeta.isFuture;
+                                            return (
+                                            <td key={`a-${mIdx}`} className="py-1.5 px-0.5 text-center font-mono tabular-nums text-[10px] border-r border-slate-200 text-blue-700 font-bold whitespace-nowrap">
                                                 {isEditing ? (
                                                     <input
                                                         type="number"
                                                         value={kpiData.actual[mIdx] !== undefined ? kpiData.actual[mIdx] : ''}
                                                         onChange={(e) => handleCellChange(kpi.id, 'actual', mIdx, e.target.value)}
-                                                        className="w-12 px-1 py-1 text-center font-bold font-mono text-blue-800 bg-blue-50/50 border border-blue-400 rounded focus:ring-1 focus:ring-blue-500 outline-none text-xs"
+                                                        className="w-11 px-0.5 py-0.5 text-center font-bold font-mono text-blue-800 bg-blue-50/50 border border-blue-400 rounded focus:ring-1 focus:ring-blue-500 outline-none text-[10px]"
                                                     />
+                                                ) : mMeta.isFuture ? (
+                                                    <span className="text-slate-300">-</span>
+                                                ) : hasAuditDrilldown ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setModalCtx({
+                                                            title: kpi.title,
+                                                            monthIdx: mIdx,
+                                                            row: mMeta,
+                                                            incidents: mMeta.incidents || [],
+                                                        })}
+                                                        title={`Klik untuk audit tiket downtime (${mMeta.incident_count || 0} insiden)`}
+                                                        className="hover:underline decoration-dotted hover:text-blue-900 transition"
+                                                    >
+                                                        {typeof kpiData.actual[mIdx] === 'number' ? kpiData.actual[mIdx].toLocaleString() : kpiData.actual[mIdx]}
+                                                    </button>
                                                 ) : (
                                                     typeof kpiData.actual[mIdx] === 'number' ? kpiData.actual[mIdx].toLocaleString() : kpiData.actual[mIdx]
                                                 )}
                                             </td>
-                                        ))}
-                                        <td className="py-2.5 px-2 text-center font-black font-mono text-blue-700 border-r border-slate-200 bg-slate-50/30">
-                                            {kpiData.actual.reduce((a, b) => Number(a) + Number(b), 0).toLocaleString()}
+                                            );
+                                        })}
+                                        <td className="py-1.5 px-1 text-center font-black font-mono tabular-nums text-[10px] text-blue-700 border-r border-slate-200 bg-slate-50/30 whitespace-nowrap">
+                                            {kpiData.actual.reduce((a, b, idx) => (metaMatrix[kpi.id]?.[idx]?.isFuture ? a : a + (Number(b) || 0)), 0).toLocaleString()}
                                         </td>
                                     </tr>
 
                                     {/* Row 3: Persentase (%) */}
                                     <tr className="bg-slate-50/80 font-bold border-b border-slate-200">
-                                        <td className="py-2 px-3 text-[11px] font-black text-slate-800 border-r border-slate-200 bg-slate-100/60">
-                                            Capaian (%)
+                                        <td className="py-1.5 px-1.5 text-[10px] font-black text-slate-800 border-r border-slate-200 bg-slate-100/60 whitespace-nowrap">
+                                            Capaian
                                         </td>
                                         {MONTH_NAMES.map((_, mIdx) => {
+                                            const mMeta = (metaMatrix[kpi.id] || [])[mIdx] || {};
                                             const pct = calcPercentage(kpiData.plan[mIdx], kpiData.actual[mIdx]);
                                             const cellMet = pct >= kpi.target;
                                             const cellWarn = pct < kpi.target && pct >= (kpi.target * 0.85);
                                             const isZero = Number(kpiData.plan[mIdx]) === 0 && Number(kpiData.actual[mIdx]) === 0;
 
                                             return (
-                                                <td key={`pct-${mIdx}`} className="py-2 px-1 text-center font-mono text-[11px] border-r border-slate-200">
-                                                    {isZero ? (
+                                                <td key={`pct-${mIdx}`} className="py-1.5 px-0.5 text-center font-mono tabular-nums text-[9.5px] border-r border-slate-200 whitespace-nowrap">
+                                                    {mMeta.isFuture || isZero ? (
                                                         <span className="text-slate-300">-</span>
                                                     ) : (
-                                                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
+                                                        <span className={`inline-block px-1 py-0.5 rounded font-black whitespace-nowrap ${
                                                             cellMet ? 'text-emerald-700 bg-emerald-100/60' :
                                                             cellWarn ? 'text-amber-700 bg-amber-100/60' :
                                                             'text-rose-700 bg-rose-100/60'
@@ -576,8 +632,8 @@ export default function KPIScorecardTable({
                                                 </td>
                                             );
                                         })}
-                                        <td className="py-2 px-2 text-center font-mono text-xs border-r border-slate-200 bg-slate-100/60">
-                                            <span className={`px-2 py-0.5 rounded-md font-black ${
+                                        <td className="py-1.5 px-1 text-center font-mono tabular-nums text-[10px] border-r border-slate-200 bg-slate-100/60 whitespace-nowrap">
+                                            <span className={`inline-block px-1.5 py-0.5 rounded font-black whitespace-nowrap ${
                                                 isMet ? 'bg-emerald-600 text-white' :
                                                 isWarning ? 'bg-amber-600 text-white' :
                                                 'bg-rose-600 text-white'
@@ -592,33 +648,33 @@ export default function KPIScorecardTable({
                     </tbody>
                     {/* Overall Summary Footer */}
                     <tfoot>
-                        <tr className="bg-slate-900 text-white font-black text-xs">
-                            <td colSpan={5} className="py-4 px-4 text-left uppercase tracking-wider text-[11px]">
-                                <div className="flex items-center gap-2">
-                                    <Sparkles size={16} className="text-amber-400" />
-                                    <span>Rata-Rata Capaian Key Performance Indicators (YTD)</span>
+                        <tr className="bg-slate-900 text-white font-black text-[10px]">
+                            <td colSpan={4} className="py-3 px-3 text-left uppercase tracking-wider">
+                                <div className="flex items-center gap-1.5">
+                                    <Sparkles size={14} className="text-amber-400 shrink-0" />
+                                    <span>Rata-Rata Capaian KPI (YTD)</span>
                                 </div>
                             </td>
                             {MONTH_NAMES.map((_, mIdx) => {
-                                // Average across 6 KPIs for that month
                                 const monthScores = initialKpis.map(k => {
                                     const d = matrixState[k.id];
-                                    if (!d) return 0;
+                                    const mMeta = (metaMatrix[k.id] || [])[mIdx] || {};
+                                    if (!d || mMeta.isFuture) return 0;
                                     return calcPercentage(d.plan[mIdx], d.actual[mIdx]);
                                 }).filter(s => s > 0);
 
                                 const mAvg = monthScores.length > 0 ? (monthScores.reduce((a, b) => a + b, 0) / monthScores.length).toFixed(1) : '-';
                                 return (
-                                    <td key={`foot-${mIdx}`} className="py-3 px-1 text-center font-mono text-[11px] border-r border-slate-800">
+                                    <td key={`foot-${mIdx}`} className="py-2.5 px-0.5 text-center font-mono tabular-nums border-r border-slate-800 whitespace-nowrap">
                                         {mAvg !== '-' ? `${mAvg}%` : '-'}
                                     </td>
                                 );
                             })}
-                            <td className="py-3 px-3 text-center font-mono text-sm border-r border-slate-800 text-amber-400">
+                            <td className="py-2.5 px-1 text-center font-mono tabular-nums text-xs border-r border-slate-800 text-amber-400 whitespace-nowrap">
                                 {avgScore}%
                             </td>
-                            <td className="py-3 px-3 text-center text-[10px] tracking-wider uppercase text-emerald-400">
-                                {avgScore >= 90 ? 'EXCELLENT' : avgScore >= 75 ? 'GOOD' : 'NEEDS ACTION'}
+                            <td className="py-2.5 px-1 text-center text-[9px] tracking-wider uppercase text-emerald-400 whitespace-nowrap">
+                                {avgScore >= 90 ? 'EXCELLENT' : avgScore >= 75 ? 'GOOD' : 'ACTION'}
                             </td>
                         </tr>
                     </tfoot>
@@ -643,9 +699,19 @@ export default function KPIScorecardTable({
                     </div>
                 </div>
                 <div className="text-[11px] text-slate-400 font-mono">
-                    *Formula dihitung otomatis secara realtime dari sistem Ticketing, Monitoring Kuma, dan Preventive Schedule.
+                    *Uptime dihitung mulai tgl 1 tiap bulan dari tiket Uptime Kuma (Server Global / ISP) & Infra Guard. Klik angka Actual untuk audit tiket.
                 </div>
             </div>
+
+            <KpiIncidentModal
+                context={modalCtx}
+                year={year}
+                onClose={() => setModalCtx(null)}
+                onToggleExclude={onToggleExcludeTicket ? async (ticketNum, excluded) => {
+                    await onToggleExcludeTicket(ticketNum, excluded);
+                    setModalCtx(null);
+                } : null}
+            />
         </div>
     );
 }

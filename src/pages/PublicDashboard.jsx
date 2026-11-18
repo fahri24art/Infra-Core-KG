@@ -38,7 +38,7 @@ export default function PublicDashboard() {
             
             // Fetch multiple data sources if needed
             let urlNetwork = `/api/network/dashboard?period=${period}&organization=${queryOrg}`;
-            let urlAssets = `/api/assets`;
+            let urlAssets = `/api/portal/public-assets-status`;
             
             if (startDate && endDate) {
                 urlNetwork += `&startDate=${startDate}&endDate=${endDate}`;

@@ -4,6 +4,7 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { classifyTicketCategory, getMonthWindowWIB } = require('../utils/kpiTime');
 
 const uploadDir = path.join(__dirname, '../public/uploads/requisitions');
 if (!fs.existsSync(uploadDir)) {
@@ -178,6 +179,44 @@ router.post('/upload-requisition', upload.single('document'), async (req, res) =
     } catch (err) {
         console.error('Error creating requisition ticket:', err);
         res.status(500).json({ error: 'Failed to create ticket' });
+    }
+});
+
+// GET /api/network/tickets/unread-summary - Fast count of open/pending tickets & top urgent alerts
+router.get('/unread-summary', async (req, res) => {
+    try {
+        const db = req.db || require('../db').getDb(req.organization || 'TCF-SG');
+        const openCountRes = await db('tickets')
+            .whereIn('status', ['Open', 'open', 'In Progress', 'in progress', 'Pending', 'pending', 'Diajukan'])
+            .count('id as count')
+            .first();
+
+        const count = Number(openCountRes?.count || 0);
+
+        const latest = await db('tickets')
+            .leftJoin('users', 'tickets.user_id', 'users.id')
+            .select(
+                'tickets.id as internal_id',
+                'tickets.number as id',
+                'tickets.subject',
+                'tickets.category',
+                'tickets.priority',
+                'tickets.status',
+                'users.name as user_name',
+                'users.department as user_department',
+                'tickets.created_at'
+            )
+            .whereIn('tickets.status', ['Open', 'open', 'In Progress', 'in progress', 'Pending', 'pending', 'Diajukan'])
+            .orderBy('tickets.created_at', 'desc')
+            .limit(5);
+
+        res.json({
+            count,
+            tickets: latest
+        });
+    } catch (err) {
+        console.error('Error fetching ticket summary:', err);
+        res.status(500).json({ count: 0, tickets: [] });
     }
 });
 
@@ -476,52 +515,66 @@ router.get('/analytics/dashboard', async (req, res) => {
     }
 });
 
-// GET /api/network/tickets/monthly-kpi - Fetch ticket metrics grouped by month
+// GET /api/network/tickets/monthly-kpi - Fetch genuine IT Helpdesk ticket metrics (excluding auto IR alerts)
 router.get('/monthly-kpi', async (req, res) => {
     const year = Number(req.query.year || new Date().getFullYear());
     try {
         const db = req.db || require('../db').getDb(req.query.organization || 'TCF-SG');
-        
+
         const tickets = await db('tickets')
             .whereRaw(db.client.config.client === 'pg' ? "to_char(created_at, 'YYYY') = ?" : "strftime('%Y', created_at) = ?", [year.toString()])
-            .select('created_at', 'status');
-            
-        const monthlyData = Array.from({ length: 12 }, (_, i) => ({ 
-            month: i + 1, 
-            total_tickets: 0, 
-            resolved_tickets: 0 
-        }));
-        
+            .select('number', 'subject', 'source', 'created_at', 'status');
+
+        const monthlyData = Array.from({ length: 12 }, (_, i) => {
+            const win = getMonthWindowWIB(year, i + 1);
+            return {
+                month: i + 1,
+                total_tickets: 0,
+                resolved_tickets: 0,
+                incident_alerts_excluded: 0,
+                isFuture: win.isFuture,
+                isCurrent: win.isCurrent,
+            };
+        });
+
         tickets.forEach(t => {
-            const date = new Date(t.created_at);
-            const m = date.getMonth(); // 0-11
-            if (m >= 0 && m < 12) {
-                monthlyData[m].total_tickets += 1;
-                // Consider Closed or Resolved as resolved
-                if (t.status === 'Resolved' || t.status === 'Closed' || t.status === 'Selesai') {
-                    monthlyData[m].resolved_tickets += 1;
-                }
+            const date = new Date(new Date(t.created_at).getTime() + 7 * 3600 * 1000);
+            const m = date.getUTCMonth(); // 0-11 in WIB
+            if (m < 0 || m >= 12) return;
+
+            const cat = classifyTicketCategory(t);
+            if (cat !== 'helpdesk') {
+                monthlyData[m].incident_alerts_excluded += 1;
+                return;
+            }
+
+            monthlyData[m].total_tickets += 1;
+            const st = String(t.status || '').toLowerCase();
+            if (st === 'resolved' || st === 'closed' || st === 'selesai') {
+                monthlyData[m].resolved_tickets += 1;
             }
         });
 
-        // Apply KPI overrides if any exist for tickets
+        // Apply non-zero manual overrides if explicitly recorded (e.g., Jan-Apr historical)
         try {
             const overrides = await db('kpi_overrides').where({ type: 'tickets', year });
             overrides.forEach(ov => {
                 const mIdx = ov.month - 1;
-                if (mIdx >= 0 && mIdx < 12) {
-                    monthlyData[mIdx][ov.metric] = isNaN(ov.value) ? ov.value : Number(ov.value);
+                const numVal = Number(ov.value);
+                if (mIdx >= 0 && mIdx < 12 && !monthlyData[mIdx].isFuture && !Number.isNaN(numVal)) {
+                    if (ov.metric === 'total_tickets' && numVal === 0 && monthlyData[mIdx].total_tickets > 0) return;
+                    if (ov.metric === 'resolved_tickets' && numVal === 0 && monthlyData[mIdx].resolved_tickets > 0) return;
+                    if (numVal > 0) monthlyData[mIdx][ov.metric] = numVal;
                 }
             });
         } catch (overrideErr) {
-            // Ignore if table doesn't exist or other err
+            // Ignore
         }
-        
-        // Calculate resolution percentage
+
         monthlyData.forEach(m => {
-            m.percentage = m.total_tickets > 0 ? ((m.resolved_tickets / m.total_tickets) * 100).toFixed(2) : "0.00";
+            m.percentage = !m.isFuture && m.total_tickets > 0 ? ((m.resolved_tickets / m.total_tickets) * 100).toFixed(2) : "0.00";
         });
-        
+
         res.json({ year, monthly: monthlyData });
     } catch (err) {
         console.error('Error fetching ticket KPI:', err);

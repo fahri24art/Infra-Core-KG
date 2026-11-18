@@ -542,10 +542,11 @@ const startScraper = () => {
         }
         
         // Auto-enforce photocopy quotas and dispatch quota warnings for both SG and KG plants
-        for (const org of ['TCF-SG', 'TCF-KG']) {
+        for (const org of ['TCF-KG']) {
             try {
-                const { checkAndEnforceCopierQuotas } = require('./ricoh_copier_lock');
+                const { checkAndEnforceCopierQuotas, maybeLockUnregisteredPins } = require('./ricoh_copier_lock');
                 await checkAndEnforceCopierQuotas(org);
+                await maybeLockUnregisteredPins(org);
             } catch (enforceErr) {
                 console.error(`[SCRAPER] Error enforcing copier quotas (${org}):`, enforceErr.message);
             }

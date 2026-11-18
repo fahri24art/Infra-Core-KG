@@ -80,8 +80,8 @@ function getPreviousBillingCycle(refDate = new Date()) {
  * Performs archiving of daily usage into ricoh_monthly_usage
  * and resets all active quotas in ricoh_device_quotas.
  */
-async function performBillingCycleReset(customCycle = null, org = 'TCF-SG') {
-    const db = getDb(org || 'TCF-SG');
+async function performBillingCycleReset(customCycle = null, org = (process.env.PLANT_CODE || 'TCF-KG')) {
+    const db = getDb(org || (process.env.PLANT_CODE || 'TCF-KG'));
     const cycle = customCycle || getPreviousBillingCycle();
     console.log(`[RICOH BILLING] [${org}] Starting Billing Cycle Reset for period: ${cycle.startDate} to ${cycle.endDate} (Billing Month: ${cycle.billingMonth})...`);
 
@@ -154,12 +154,14 @@ async function performBillingCycleReset(customCycle = null, org = 'TCF-SG') {
             current_usage_copier_color: 0,
             current_usage: 0,
             copier_status: 'active',
+            copier_bw_status: 'active',
+            copier_color_status: 'active',
             last_reset: db.fn.now()
         });
 
         try {
             const { unlockAllCopiers } = require('./ricoh_copier_lock');
-            await unlockAllCopiers(org || 'TCF-SG');
+            await unlockAllCopiers(org || (process.env.PLANT_CODE || 'TCF-KG'));
         } catch (copierErr) {
             console.error(`[RICOH BILLING] Copier unlock error on reset (${org}):`, copierErr.message);
         }

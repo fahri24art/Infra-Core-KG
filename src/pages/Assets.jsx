@@ -1700,6 +1700,22 @@ export default function Assets() {
                                     <Download size={16} />
                                     DOWNLOAD AGENT V30.0 (PLANT KARAWANG)
                                 </a>
+
+                                <a
+                                    href="/api/network/agents/download-android"
+                                    className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg transition-colors uppercase tracking-widest shadow-md shadow-teal-500/20"
+                                >
+                                    <Smartphone size={16} />
+                                    ANDROID PHONE AGENT (.APK)
+                                </a>
+
+                                <a
+                                    href="/api/network/agents/download-phone-adb"
+                                    className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors uppercase tracking-widest shadow-md shadow-indigo-500/20"
+                                >
+                                    <TerminalIcon size={16} />
+                                    PHONE ADB COLLECTOR (.PS1)
+                                </a>
                                 
                                 <a
                                     href="/api/network/agents/download-wazuh"

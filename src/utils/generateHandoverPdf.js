@@ -24,6 +24,45 @@ const getIndonesianMonth = (date) => {
     return months[date.getMonth()];
 };
 
+const renderSignatureBlock = (doc, { displayName, isSG, pageWidth, startY, compact = false }) => {
+    let currentY = startY;
+
+    doc.setFont("times", "normal");
+    doc.setFontSize(8.5);
+    doc.text("Demikian pernyataan ini saya tanda tangani sebagai bukti persetujuan dan janji saya bagi pihak-pihak yang berwenang serta yang", 10, currentY);
+    currentY += compact ? 3.8 : 4;
+    doc.text("berkepentingan, khususnya berkaitan dengan perangkat inventaris yang telah saya terima dan saya pinjam dari PT. TRI CENTRUM FORTUNA.", 10, currentY);
+
+    currentY += compact ? 6 : 10;
+    doc.setFontSize(8);
+    doc.text(`Dicek dan diserahterimakan bersama di ${isSG ? 'Purwakarta' : 'Karawang'}, oleh :`, pageWidth / 2, currentY, { align: "center" });
+
+    currentY += compact ? 6 : 12;
+    doc.text("Yang menerima,", 70, currentY, { align: "center" });
+    doc.text("Disetujui dan disahkan oleh,", 140, currentY, { align: "center" });
+
+    currentY += compact ? 18 : 22;
+
+    doc.line(40, currentY, 100, currentY);
+    doc.line(110, currentY, 170, currentY);
+
+    currentY += 4;
+    doc.text(`${displayName}`, 70, currentY, { align: "center" });
+    doc.text("Fauziah Fajrin", 140, currentY, { align: "center" });
+    currentY += 4;
+    doc.text("(Direktur Administrasi)", 140, currentY, { align: "center" });
+
+    currentY += compact ? 7 : 10;
+    doc.setFontSize(7);
+    doc.text("OpenSource/Freeware adalah perangkat lunak yg bebas digunakan untuk tujuan apapun dengan kode sumber terbuka atau tertutup.", 10, currentY);
+    currentY += 3;
+    doc.text("** Software illegal adalah perangkat lunak yang bersifat komersial dan memerlukan lisensi untuk dapat menggunakannya yang tidak dimiliki oleh perusahaan.", 10, currentY);
+    currentY += 5;
+    doc.setFontSize(8);
+    doc.setFont("times", "bold");
+    doc.text("Telah dikembalikan dan dicek pada tanggal : ..............................................", pageWidth / 2, currentY, { align: "center" });
+};
+
 export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {}, action = 'download') => {
     const isString = typeof formDataObj === 'string';
     const formData = isString ? { divisi: formDataObj } : formDataObj;
@@ -63,10 +102,13 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
             const isKG = currentOrg.toUpperCase().includes('KG') || invNum.toUpperCase().includes('TCFKG');
             const isSG = !isKG;
             const docCode = isKG ? 'TCFKG-FM-ICT-03-02' : 'TCFSG-FM-ICT-03-02';
+            const catStr = (asset.category || '').toLowerCase();
+            const isMobileAsset = catStr.includes('phone') || catStr.includes('mobile') || catStr.includes('tablet')
+                || invNum.toUpperCase().includes('-SP-') || invNum.toUpperCase().includes('-TB-');
 
             // --- Header Configuration ---
             if (imgData) {
-                addSopHeader(doc, pageWidth, "BERITA ACARA SERAH TERIMA", docCode, "01", "01 Oktober 2021", "1 dari 2", imgData);
+                addSopHeader(doc, pageWidth, "BERITA ACARA SERAH TERIMA", docCode, "01", "01 Oktober 2021", isMobileAsset ? "1 dari 1" : "1 dari 2", imgData);
             }
             
             let matchedYear = today.getFullYear();
@@ -77,14 +119,18 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
 
 
             // --- Body / Content ---
+            const rowStep = isMobileAsset ? 4.2 : 5;
+            const textStep = isMobileAsset ? 3.8 : 4;
+            const ruleStep = isMobileAsset ? 3.5 : 4;
+
             doc.setFontSize(9);
-            let currentY = 42;
+            let currentY = isMobileAsset ? 39 : 42;
             doc.text("Dalam rangka menunjang kelancaran pelaksanaan tugas dan tanggung jawab karyawan PT TRI CENTRUM FORTUNA", 10, currentY);
-            currentY += 5;
+            currentY += rowStep;
             
             const dateStr = `${getIndonesianDay(today)}, ${dateNum} ${getIndonesianMonth(today)} ${matchedYear}`;
             doc.text(`maka pada hari ini ${dateStr} telah diserahterimakan inventaris perangkat ICT milik perusahaan,`, 10, currentY);
-            currentY += 5;
+            currentY += rowStep;
             doc.text("dengan data sebagai berikut :", 10, currentY);
 
             // Asset Details Extraction
@@ -97,9 +143,10 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
                 }
             } catch (e) {}
 
-            const catStr = (asset.category || '').toLowerCase();
             let jenisStr = asset.category || 'Device';
             if (catStr.includes('pc') || catStr.includes('desktop')) jenisStr = 'PC / Desktop';
+            else if (catStr.includes('printer') || catStr.includes('scanner')) jenisStr = 'Printer / Scanner';
+            else if (catStr.includes('phone') || catStr.includes('mobile') || catStr.includes('tablet')) jenisStr = 'Smartphone / Tablet';
             
             const osInfo = asset.os_info || parsedSpecs.os || parsedSpecs.OperatingSystem || '-';
             const ramInfo = asset.ram || parsedSpecs.ram || parsedSpecs.memory || parsedSpecs.Memory || '-';
@@ -112,16 +159,29 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
                 storageInfo = JSON.stringify(storageInfo);
             }
 
-            const kelengkapan = catStr.includes('pc') ? 'PC, Keyboard, Mouse, Kabel Power' : (catStr.includes('laptop') ? 'Laptop, Charger, Mouse, Tas' : 'Unit, Kabel Power');
+            const kelengkapan = (catStr.includes('pc') || catStr.includes('desktop'))
+                ? 'PC, Keyboard, Mouse, Kabel Power'
+                : (catStr.includes('laptop') || catStr.includes('notebook'))
+                    ? 'Laptop, Charger, Mouse, Tas'
+                    : (catStr.includes('printer') || catStr.includes('scanner'))
+                        ? 'Unit Printer, Kabel Power, Kabel USB / LAN'
+                        : isMobileAsset
+                            ? 'Unit HP / Tablet, Charger / Adaptor, Kabel Data'
+                            : 'Unit, Kabel Power';
 
-            currentY += 6;
+            const specParts = [cpuInfo, ramInfo, storageInfo].filter(v => v && v !== '-');
+            const spesifikasiStr = specParts.length > 0
+                ? specParts.join(', ')
+                : (asset.ip_address ? `IP: ${asset.ip_address}` : (parsedSpecs.connectivity || asset.model || '-'));
+
+            currentY += isMobileAsset ? 4.5 : 6;
             const deviceDetails = [
                 { label: "o Jenis Perangkat", value: jenisStr },
                 { label: "o Merek, type", value: `${asset.manufacturer || ''} ${asset.model || ''}`.trim() || '-' },
                 { label: "o Asset / SN", value: `${asset.inventory_number || '-'} / ${asset.serial_number || '-'}` },
                 { label: "o Kelengkapan", value: kelengkapan },
                 { label: "o SN Charger", value: snCharger || "......................................................................................" },
-                { label: "o Spesifikasi", value: `${cpuInfo}, ${ramInfo}, ${storageInfo}` },
+                { label: "o Spesifikasi", value: spesifikasiStr },
                 { label: "o Kondisi", value: "Baru / Bekas *" },
                 { label: "o OS / Software", value: osInfo }
             ];
@@ -131,12 +191,12 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
                 doc.text(":", 45, currentY);
                 // truncate to avoid overflow
                 doc.text(item.value.toString().replace(/\n/g, ' ').substring(0, 85), 48, currentY);
-                currentY += 5;
+                currentY += rowStep;
             });
 
-            currentY += 4;
+            currentY += isMobileAsset ? 2.5 : 4;
             doc.text("kepada,", 10, currentY);
-            currentY += 5;
+            currentY += rowStep;
             const userDetails = [
                 { label: "o Nama Lengkap", value: userName },
                 { label: "o N.I.K", value: nik || "......................................................................................" },
@@ -149,29 +209,29 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
                 doc.text(item.label, 15, currentY);
                 doc.text(":", 55, currentY);
                 doc.text(item.value, 58, currentY);
-                currentY += 5;
+                currentY += rowStep;
             });
 
-            currentY += 4;
+            currentY += isMobileAsset ? 2.5 : 4;
             doc.text("Setelah pengecekan dilakukan, perangkat tersebut dalam kondisi utuh dan dapat berfungsi serta dipergunakan sebagaimana", 10, currentY);
-            currentY += 4;
+            currentY += textStep;
             doc.text("mestinya, sehingga karyawan bersangkutan menyetujui dan mengesahkan pernyataan dibawah ini :", 10, currentY);
 
-            currentY += 8;
+            currentY += isMobileAsset ? 5.5 : 8;
             doc.setFont("times", "bold");
             doc.setFontSize(10);
             doc.text("SURAT PERNYATAAN", pageWidth / 2, currentY, { align: "center" });
             
-            currentY += 6;
+            currentY += isMobileAsset ? 4.5 : 6;
             doc.setFont("times", "normal");
             doc.setFontSize(8.5);
             doc.text("Saya yang bertanda tangan dibawah ini, menyatakan dengan sebenarnya bahwa saya telah menerima perangkat inventaris sesuai", 10, currentY);
-            currentY += 4;
+            currentY += textStep;
             doc.text("dengan data dalam surat ini maupun lampirannya. Selanjutnya terhadap perangkat inventaris yang telah saya terima tersebut,", 10, currentY);
-            currentY += 4;
+            currentY += textStep;
             doc.text("saya bersedia dan berjanji untuk :", 10, currentY);
 
-            currentY += 5;
+            currentY += isMobileAsset ? 4 : 5;
             
             const rules = [
                 { 
@@ -236,7 +296,7 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
                     const lines = segment.t.split('\n');
                     for (let j = 0; j < lines.length; j++) {
                         if (j > 0) {
-                            currentLineY += 4;
+                            currentLineY += ruleStep;
                             xOffset = 10; 
                         }
                         doc.setFont("times", segment.bold ? "bold" : "normal");
@@ -246,20 +306,20 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
                 });
                 
                 // Adjust Y based on lines added in this rule
-                currentY = currentLineY + 4;
+                currentY = currentLineY + ruleStep;
             });
 
             currentY += 1;
             doc.setFontSize(7.5);
             doc.setFont("times", "bold");
             doc.text("Terkait Undang-undang 19 Tahun 2002 tentang hak cipta pasal 72 ayat 3 yaitu :", 14, currentY);
-            currentY += 4;
+            currentY += ruleStep;
             doc.setFont("times", "italic");
             doc.text('"Barang siapa dengan sengaja dan tanpa hak memperbanyak penggunaan untuk kepentingan komersial suatu program komputer', 14, currentY);
-            currentY += 4;
+            currentY += ruleStep;
             doc.text('dipidana dengan pidana penjara paling lama 5 (lima) tahun dan/atau denda paling banyak Rp. 500.000.000,- (lima ratus juta rupiah)".', 14, currentY);
             
-            currentY += 5;
+            currentY += isMobileAsset ? 4 : 5;
             doc.setFont("times", "normal");
             doc.setFontSize(8.5);
             doc.text("7.", 10, currentY);
@@ -269,99 +329,79 @@ export const generateHandoverPdf = async (userName, assetsInput, formDataObj = {
             doc.setFont("times", "normal");
             doc.text(" apabila ditemukan software ilegal yang di-install sendiri oleh user pemegang asset.", 14 + textW, currentY);
 
-            // End of Page 1
+            if (isMobileAsset) {
+                // HP / Smartphone / Tablet cukup 1 halaman langsung tanda tangan tanpa lampiran software
+                renderSignatureBlock(doc, {
+                    displayName,
+                    isSG,
+                    pageWidth,
+                    startY: currentY + 6,
+                    compact: true,
+                });
 
-            // Form Footer Number (Page 1)
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(6);
-            doc.text(docCode, pageWidth - 10, pageHeight - 5, { align: "right" });
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6);
+                doc.text(docCode, pageWidth - 10, pageHeight - 5, { align: "right" });
+            } else {
+                // End of Page 1
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6);
+                doc.text(docCode, pageWidth - 10, pageHeight - 5, { align: "right" });
 
-            // --- PAGE 2: Software Attachment & Signatures ---
-            doc.addPage();
-            
-            // Software Header
-            doc.setFont("times", "bold");
-            doc.setFontSize(12);
-            doc.text("LAMPIRAN BAST", pageWidth / 2, 20, { align: "center" });
-            doc.setFontSize(10);
-            doc.text("DAFTAR INSTALLED SOFTWARE & DRIVERS", pageWidth / 2, 26, { align: "center" });
-            
-            doc.setFont("times", "normal");
-            doc.setFontSize(9);
-            doc.text(`Asset / SN : ${asset.inventory_number || '-'} / ${asset.serial_number || '-'}`, 15, 35);
-            doc.text(`Pengguna : ${userName}`, 15, 40);
+                // --- PAGE 2: Software Attachment & Signatures ---
+                doc.addPage();
+                
+                // Software Header
+                doc.setFont("times", "bold");
+                doc.setFontSize(12);
+                doc.text("LAMPIRAN BAST", pageWidth / 2, 20, { align: "center" });
+                doc.setFontSize(10);
+                doc.text("DAFTAR INSTALLED SOFTWARE & DRIVERS", pageWidth / 2, 26, { align: "center" });
+                
+                doc.setFont("times", "normal");
+                doc.setFontSize(9);
+                doc.text(`Asset / SN : ${asset.inventory_number || '-'} / ${asset.serial_number || '-'}`, 15, 35);
+                doc.text(`Pengguna : ${userName}`, 15, 40);
 
-            // Menggunakan Standard Legal Software List secara Global
-            const tableData = [
-                ['Windows 10 / 11 Pro', 'Latest / 24H2'],
-                ['Microsoft Office 2021 / Microsoft 365', '2021 / Latest'],
-                ['Google Chrome', 'Latest'],
-                ['Adobe Acrobat Reader', 'Latest'],
-                ['7-Zip', 'Latest'],
-                ['VLC Media Player', 'Latest'],
-                ['WhatsApp Desktop', 'Latest'],
-                ['Microsoft Teams', 'Latest'],
-                ['AnyDesk', 'Latest'],
-                ['Microsoft OneDrive', 'Latest'],
-                ['Microsoft Defender Antivirus', 'Built-in'],
-                ['Printer Driver', 'Sesuai tipe printer']
-            ];
+                // Menggunakan Standard Legal Software List secara Global
+                const tableData = [
+                    ['Windows 10 / 11 Pro', 'Latest / 24H2'],
+                    ['Microsoft Office 2021 / Microsoft 365', '2021 / Latest'],
+                    ['Google Chrome', 'Latest'],
+                    ['Adobe Acrobat Reader', 'Latest'],
+                    ['7-Zip', 'Latest'],
+                    ['VLC Media Player', 'Latest'],
+                    ['WhatsApp Desktop', 'Latest'],
+                    ['Microsoft Teams', 'Latest'],
+                    ['AnyDesk', 'Latest'],
+                    ['Microsoft OneDrive', 'Latest'],
+                    ['Microsoft Defender Antivirus', 'Built-in'],
+                    ['Printer Driver', 'Sesuai tipe printer']
+                ];
 
-            autoTable(doc, {
-                startY: 45,
-                head: [['Application Name', 'Version']],
-                body: tableData,
-                theme: 'grid',
-                styles: { fontSize: 8, font: 'times', cellPadding: 1.5 },
-                headStyles: { fillColor: [230, 230, 230], textColor: 20, fontStyle: 'bold' },
-                margin: { left: 15, right: 15 }
-            });
+                autoTable(doc, {
+                    startY: 45,
+                    head: [['Application Name', 'Version']],
+                    body: tableData,
+                    theme: 'grid',
+                    styles: { fontSize: 8, font: 'times', cellPadding: 1.5 },
+                    headStyles: { fillColor: [230, 230, 230], textColor: 20, fontStyle: 'bold' },
+                    margin: { left: 15, right: 15 }
+                });
 
-            // Start Signatures Block after table
-            currentY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 45) + 10;
-            
-            doc.setFont("times", "normal");
-            doc.setFontSize(8.5);
-            doc.text("Demikian pernyataan ini saya tanda tangani sebagai bukti persetujuan dan janji saya bagi pihak-pihak yang berwenang serta yang", 10, currentY);
-            currentY += 4;
-            doc.text("berkepentingan, khususnya berkaitan dengan perangkat inventaris yang telah saya terima dan saya pinjam dari PT. TRI CENTRUM FORTUNA.", 10, currentY);
+                renderSignatureBlock(doc, {
+                    displayName,
+                    isSG,
+                    pageWidth,
+                    startY: (doc.lastAutoTable ? doc.lastAutoTable.finalY : 45) + 10,
+                    compact: false,
+                });
 
-            currentY += 10;
-            doc.setFontSize(8);
-            doc.text(`Dicek dan diserahterimakan bersama di ${isSG ? 'Purwakarta' : 'Karawang'}, oleh :`, pageWidth / 2, currentY, { align: "center" });
-
-            currentY += 6;
-            currentY += 6;
-            // 2 Columns for signatures
-            doc.text("Yang menerima,", 70, currentY, { align: "center" });
-            doc.text("Disetujui dan disahkan oleh,", 140, currentY, { align: "center" });
-
-            currentY += 22; // Space for signatures
-            
-            // Name lines
-            doc.line(40, currentY, 100, currentY); // 60mm width
-            doc.line(110, currentY, 170, currentY);
-
-            currentY += 4;
-            doc.text(`${displayName}`, 70, currentY, { align: "center" });
-            doc.text("Fauziah Fajrin", 140, currentY, { align: "center" });
-            currentY += 4;
-            doc.text("(Direktur Administrasi)", 140, currentY, { align: "center" });
-
-            currentY += 10;
-            doc.setFontSize(7);
-            doc.text("OpenSource/Freeware adalah perangkat lunak yg bebas digunakan untuk tujuan apapun dengan kode sumber terbuka atau tertutup.", 10, currentY);
-            currentY += 3;
-            doc.text("** Software illegal adalah perangkat lunak yang bersifat komersial dan memerlukan lisensi untuk dapat menggunakannya yang tidak dimiliki oleh perusahaan.", 10, currentY);
-            currentY += 5;
-            doc.setFontSize(8);
-            doc.setFont("times", "bold");
-            doc.text("Telah dikembalikan dan dicek pada tanggal : ..............................................", pageWidth / 2, currentY, { align: "center" });
-
-            // Form Footer Number (Page 2)
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(6);
-            doc.text(docCode, pageWidth - 10, pageHeight - 5, { align: "right" });
+                // Form Footer Number (Page 2)
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6);
+                doc.text(docCode, pageWidth - 10, pageHeight - 5, { align: "right" });
+            }
         }
 
         if (action === 'download') {

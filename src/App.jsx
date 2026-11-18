@@ -384,7 +384,7 @@ function Layout({ children }) {
             </nav>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col h-screen print:h-auto overflow-hidden print:overflow-visible w-full max-w-full">
+            <div className="flex-1 min-w-0 flex flex-col h-screen print:h-auto overflow-hidden print:overflow-visible w-full max-w-full">
                 {/* InfraGuard-Aligned Cyber Topbar */}
                 <header className="print:hidden h-14 bg-[#0B132B] border-b border-slate-800/90 flex items-center justify-between px-3 md:px-5 z-30 shadow-md">
                     <div className="flex items-center gap-2 md:gap-4 text-sm font-bold text-slate-400 overflow-hidden">

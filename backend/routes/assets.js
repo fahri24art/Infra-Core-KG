@@ -3,6 +3,8 @@ const router = express.Router();
 const db = require('../db');
 const { syncAssetEverywhere } = require('../services/asset_sync');
 
+const RESOLVED_DEPT_RAW = "COALESCE(NULLIF(TRIM(assets.department), ''), NULLIF(NULLIF(TRIM(hr2.department), ''), 'General'), NULLIF(NULLIF(TRIM(hr1.department), ''), 'General'), NULLIF(NULLIF(TRIM(users.department), ''), 'General'), NULLIF(NULLIF(TRIM(assets.location), ''), 'Unknown')) as user_department";
+
 // GET /api/assets - List all assets
 router.get('/', async (req, res) => {
     try {
@@ -13,7 +15,7 @@ router.get('/', async (req, res) => {
             .select(
                 'assets.*',
                 db.raw('COALESCE(hr2.name, hr1.name, users.name) as user_name'),
-                db.raw('COALESCE(hr2.department, hr1.department, users.department) as user_department'),
+                db.raw(RESOLVED_DEPT_RAW),
                 db.raw("COALESCE(NULLIF(assets.type, ''), assets.category) as type"),
                 db.raw("COALESCE(NULLIF(assets.category, ''), assets.type) as category")
             )
@@ -196,7 +198,7 @@ router.get('/:id', async (req, res) => {
                 'assets.*',
                 db.raw('COALESCE(assets.hr_employee_id, users.hr_employee_id) as hr_employee_id'),
                 db.raw('COALESCE(hr2.name, hr1.name, users.name) as user_name'),
-                db.raw('COALESCE(hr2.department, hr1.department, users.department) as user_department'),
+                db.raw(RESOLVED_DEPT_RAW),
                 'users.email as user_email'
             )
             .where('assets.id', req.params.id)
@@ -215,7 +217,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/assets - Create asset
 router.post('/', async (req, res) => {
     try {
-        const { name, serial_number, inventory_number, location, status, category, contact, manufacturer, model, specs, user_id, hr_employee_id, purchase_date } = req.body;
+        const { name, serial_number, inventory_number, location, department, status, category, contact, manufacturer, model, specs, user_id, hr_employee_id, purchase_date } = req.body;
         
         let parsedDate = null;
         if (purchase_date && purchase_date.trim() !== '') {
@@ -227,25 +229,30 @@ router.post('/', async (req, res) => {
         if (serial_number) existingAsset = await db('assets').where('serial_number', serial_number).first();
         if (!existingAsset && name) existingAsset = await db('assets').where('name', name).first();
 
+        const resolvedDept = department !== undefined ? (String(department || '').trim() || null) : undefined;
+
         let newAssetId;
         if (existingAsset) {
             await db('assets').where({ id: existingAsset.id }).update({
-                inventory_number, location, status, category, contact, manufacturer, model,
+                inventory_number, location,
+                ...(resolvedDept !== undefined ? { department: resolvedDept } : {}),
+                status, category, contact, manufacturer, model,
                 specs: specs ? JSON.stringify(specs) : null,
                 user_id: user_id || null, hr_employee_id: hr_employee_id || null,
                 purchase_date: parsedDate, updated_at: new Date()
             });
             newAssetId = existingAsset.id;
         } else {
-            const [id] = await db('assets').insert({
+            const insertRes = await db('assets').insert({
                 name, serial_number, inventory_number, location,
+                department: resolvedDept || null,
                 status: status || 'Active', category: category || 'Computer',
                 contact, manufacturer, model,
                 specs: specs ? JSON.stringify(specs) : null,
                 user_id: user_id || null, hr_employee_id: hr_employee_id || null,
                 purchase_date: parsedDate, created_at: new Date(), updated_at: new Date()
-            });
-            newAssetId = id;
+            }).returning('id');
+            newAssetId = insertRes[0]?.id || insertRes[0];
         }
         const newAsset = await db('assets').where({ id: newAssetId }).first();
 
@@ -264,22 +271,31 @@ router.post('/', async (req, res) => {
 // PUT /api/assets/:id - Update asset
 router.put('/:id', async (req, res) => {
     try {
-        const { name, serial_number, inventory_number, location, status, category, type, contact, manufacturer, model, specs, user_id, hr_employee_id, purchase_date } = req.body;
-        
+        const { name, serial_number, inventory_number, location, department, status, category, type, contact, manufacturer, model, specs, user_id, hr_employee_id, purchase_date } = req.body;
+        const existingAsset = await db('assets').where({ id: req.params.id }).first();
+        if (!existingAsset) {
+            return res.status(404).json({ error: 'Asset not found' });
+        }
+
         let parsedDate = null;
         if (purchase_date && purchase_date.trim() !== '') {
             parsedDate = purchase_date;
         }
 
-        let resolvedUserId = user_id || null;
         let resolvedHrEmployeeId = hr_employee_id ? parseInt(hr_employee_id, 10) : null;
         if (isNaN(resolvedHrEmployeeId)) resolvedHrEmployeeId = null;
 
+        let resolvedUserId = user_id || null;
         if (resolvedHrEmployeeId) {
             const matchingUser = await db('users').where('hr_employee_id', resolvedHrEmployeeId).first();
             if (matchingUser) {
                 resolvedUserId = matchingUser.id;
+            } else if (Number(existingAsset.hr_employee_id) !== Number(resolvedHrEmployeeId)) {
+                // HR custodian changed to an employee without a portal user account; clear stale previous user_id
+                resolvedUserId = null;
             }
+        } else if (hr_employee_id === '' || hr_employee_id === null) {
+            resolvedUserId = null;
         } else if (resolvedUserId) {
             const matchingUser = await db('users').where('id', resolvedUserId).first();
             if (matchingUser && matchingUser.hr_employee_id) {
@@ -303,6 +319,9 @@ router.put('/:id', async (req, res) => {
             purchase_date: parsedDate,
             updated_at: new Date()
         };
+        if (department !== undefined) {
+            updatePayload.department = String(department || '').trim() || null;
+        }
         if (specs !== undefined) {
             updatePayload.specs = specs ? JSON.stringify(specs) : null;
         }
@@ -563,6 +582,73 @@ router.post('/:id/clear-threats', async (req, res) => {
     } catch (err) {
         console.error('Error clearing threats:', err);
         res.status(500).json({ error: 'Failed to clear threats' });
+    }
+});
+
+// POST /api/network/assets/:id/create-security-ticket - Create security incident ticket for ISO/IATF audit evidence
+router.post('/:id/create-security-ticket', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const db = req.db || require('../db').getDb(req.organization || 'TCF-SG');
+
+        let asset = null;
+        if (!isNaN(Number(id))) {
+            asset = await db('assets').where('id', Number(id)).first();
+        }
+        if (!asset) {
+            asset = await db('assets').where('uuid', id).orWhere('name', id).first();
+        }
+        if (!asset) {
+            return res.status(404).json({ error: 'Asset tidak ditemukan' });
+        }
+
+        // Generate Ticket Number: SEC-YYYYXXXX
+        const countRes = await db('tickets').count('id as count').first();
+        const total = parseInt(countRes?.count || 0, 10);
+        const ticketNum = `SEC-${new Date().getFullYear()}${(total + 1).toString().padStart(4, '0')}`;
+
+        const ticketData = {
+            number: ticketNum,
+            subject: `🚨 [Security Alert] Ancaman Terdeteksi pada ${asset.name}`,
+            description: `[EVIDEN AUDIT INSIDEN KEAMANAN SIBER & EDR - ISO 27001 / IATF 16949]\n\n` +
+                `Perangkat: ${asset.name} (${asset.model || 'PC'})\n` +
+                `IP Address: ${asset.ip_address || '-'}\n` +
+                `UUID: ${asset.uuid || '-'}\n` +
+                `Jumlah Ancaman: ${asset.threats_found || 1} ancaman tercatat oleh EDR / Windows Defender / Wazuh SIEM.\n` +
+                `Waktu Deteksi: ${new Date().toLocaleString('id-ID')}\n` +
+                `Tindakan Awal: Diperlukan investigasi mendalam, Quick Scan / Full Scan, dan isolasi endpoint.\n\n` +
+                `Tiket ini dibuat secara resmi sebagai berkas dokumen eviden audit kepatuhan IT Security & SOP Penanganan Insiden.`,
+            status: 'Open',
+            priority: 'High',
+            source: 'Wazuh SIEM / EDR Agent',
+            category: 'Security Incident',
+            asset_id: asset.id,
+            user_id: asset.user_id || req.user?.id || null,
+            created_at: new Date(),
+            updated_at: new Date()
+        };
+
+        const [insertedId] = await db('tickets').insert(ticketData).returning('id');
+        const finalId = typeof insertedId === 'object' ? (insertedId.id || insertedId) : insertedId;
+
+        // Log to asset_history
+        await db('asset_history').insert({
+            asset_id: asset.id,
+            action: 'Security Incident Logged',
+            details: `Tiket insiden keamanan resmi ${ticketNum} berhasil diterbitkan untuk eviden audit.`,
+            performed_by: req.user?.name || 'ICT Security Administrator',
+            created_at: new Date()
+        }).catch(() => {});
+
+        res.json({
+            success: true,
+            ticket_id: finalId,
+            ticket_number: ticketNum,
+            message: `Tiket Insiden ${ticketNum} berhasil diterbitkan!`
+        });
+    } catch (err) {
+        console.error('Error creating security ticket:', err);
+        res.status(500).json({ error: 'Gagal membuat tiket insiden keamanan.' });
     }
 });
 

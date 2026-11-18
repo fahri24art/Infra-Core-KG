@@ -8,6 +8,7 @@
 const { exec } = require('child_process');
 const axios = require('axios');
 const db = require('../db');
+const { recordInfraGuardIspTicket } = require('../utils/kpiTime');
 
 const ISP_PROVIDERS = [
     {
@@ -221,6 +222,16 @@ async function checkAllIsps() {
                     state.lastReason = res.reason;
                     state.since = new Date();
 
+                    await recordInfraGuardIspTicket(db, {
+                        shortName: res.shortName,
+                        name: res.name,
+                        interfaceName: res.interfaceName,
+                        gatewayIp: res.gatewayIp,
+                        degraded: true,
+                        reason: res.reason,
+                        metricsSummary: `Loss ${res.lossPct}% | Latency ${res.avgLatency !== null ? res.avgLatency.toFixed(1) + 'ms' : '-'} | Traffic ${formatTraffic(res.rxMbps, res.txMbps)}`,
+                    });
+
                     let partnerStatusText = '';
                     if (partner) {
                         if (!partner.degraded) {
@@ -243,6 +254,16 @@ async function checkAllIsps() {
                 const prevReason = state.lastReason;
                 state.lastReason = null;
                 state.since = null;
+
+                await recordInfraGuardIspTicket(db, {
+                    shortName: res.shortName,
+                    name: res.name,
+                    interfaceName: res.interfaceName,
+                    gatewayIp: res.gatewayIp,
+                    degraded: false,
+                    reason: prevReason || 'Normal',
+                    metricsSummary: `Latency ${res.avgLatency !== null ? res.avgLatency.toFixed(1) + 'ms' : 'Normal'} | Loss ${res.lossPct}% | Traffic ${formatTraffic(res.rxMbps, res.txMbps)}`,
+                });
 
                 resolvedAlerts.push(
                     `✅ *ISP Alert [${res.plant} — ${res.name}]*\n` +

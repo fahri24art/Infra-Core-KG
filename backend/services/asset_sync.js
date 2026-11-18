@@ -27,31 +27,36 @@ async function generateUniquePin(db) {
     return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+function mapDeptStringToId(raw, deptMap) {
+    const s = (raw || '').toString().toLowerCase().trim();
+    if (!s || ['general', 'nan', 'departemen', 'office', 'unknown', 'tcf-sg'].includes(s)) return null;
+    if (s.includes('market') || s.includes('sales')) return deptMap['marketing'] || 1;
+    if (s.includes('hr') || s.includes('ga') || s.includes('hrd')) return deptMap['hrga'] || 2;
+    if (s.includes('qmr')) return deptMap['qmr'] || 3;
+    if (s.includes('purchas') || s.includes('procure') || s.includes('store')) return deptMap['purchasing'] || 4;
+    if (s.includes('production engineering') || /\bpe\b/.test(s)) return deptMap['engineering pe'] || 5;
+    if (s.includes('r&d') || s.includes('rnd') || s.includes('research')) return deptMap['engineering r&d'] || 6;
+    if (s.includes('tool') || s.includes('tstm') || s.includes('mold')) return deptMap['engineering tstm'] || 7;
+    if (s.includes('maint') || s.includes('mtc')) return deptMap['maintenance'] || 8;
+    if (s.includes('qc') || s.includes('quality') || s.includes('cmm')) return deptMap['qc'] || 9;
+    if (s.includes('ict') || /\bit\b/.test(s) || /\bedp\b/.test(s)) return deptMap['ict'] || 10;
+    if (s.includes('ppic')) return deptMap['ppic'] || 11;
+    if (s.includes('prod') || s.includes('manufactur') || s.includes('shopfloor') || s.includes('fa')) return deptMap['produksi'] || 12;
+    return null;
+}
+
 /**
  * Map department / location string to ricoh_departments ID
  */
 function resolveDepartmentId(deptStr, locStr, contactStr, nameStr, deptMap) {
     const clean = (val) => (val || '').toString().toLowerCase().trim();
-    const d = clean(deptStr);
     const loc = clean(locStr);
     const contact = clean(contactStr);
     const name = clean(nameStr);
 
     // Priority 1: Official HR Department / Linked User Department (Highest Source of Truth)
-    if (d && d !== 'general' && d !== 'nan' && d !== 'departemen') {
-        if (d.includes('market') || d.includes('sales')) return deptMap['marketing'] || 1;
-        if (d.includes('hr') || d.includes('ga') || d.includes('hrd')) return deptMap['hrga'] || 2;
-        if (d.includes('qmr')) return deptMap['qmr'] || 3;
-        if (d.includes('purchas') || d.includes('procure') || d.includes('store')) return deptMap['purchasing'] || 4;
-        if (d.includes('production engineering') || d.includes('pe')) return deptMap['engineering pe'] || 5;
-        if (d.includes('r&d') || d.includes('rnd') || d.includes('research')) return deptMap['engineering r&d'] || 6;
-        if (d.includes('tool') || d.includes('tstm') || d.includes('mold')) return deptMap['engineering tstm'] || 7;
-        if (d.includes('maint') || d.includes('mtc')) return deptMap['maintenance'] || 8;
-        if (d.includes('qc') || d.includes('quality') || d.includes('cmm')) return deptMap['qc'] || 9;
-        if (d.includes('ict') || d.includes('it') || d.includes('edp')) return deptMap['ict'] || 10;
-        if (d.includes('ppic')) return deptMap['ppic'] || 11;
-        if (d.includes('prod') || d.includes('manufactur') || d.includes('shopfloor') || d.includes('fa')) return deptMap['produksi'] || 12;
-    }
+    const fromDept = mapDeptStringToId(deptStr, deptMap);
+    if (fromDept) return fromDept;
 
     // Priority 2: Contact / PIC Identity clues
     const personStr = `${contact} ${name}`.toLowerCase();
@@ -67,20 +72,8 @@ function resolveDepartmentId(deptStr, locStr, contactStr, nameStr, deptMap) {
     if (personStr.includes('nurul aeni') || personStr.includes('karin aprilda') || personStr.includes('purchas') || personStr.includes('pur')) return deptMap['purchasing'] || 4;
 
     // Priority 3: Asset Location
-    if (loc && loc !== 'general' && loc !== 'office' && loc !== 'unknown' && loc !== 'tcf-sg') {
-        if (loc.includes('market') || loc.includes('sales')) return deptMap['marketing'] || 1;
-        if (loc.includes('hr') || loc.includes('ga') || loc.includes('hrd')) return deptMap['hrga'] || 2;
-        if (loc.includes('qmr')) return deptMap['qmr'] || 3;
-        if (loc.includes('purchas') || loc.includes('procure') || loc.includes('store')) return deptMap['purchasing'] || 4;
-        if (loc.includes('production engineering') || loc.includes('pe')) return deptMap['engineering pe'] || 5;
-        if (loc.includes('r&d') || loc.includes('rnd') || loc.includes('research')) return deptMap['engineering r&d'] || 6;
-        if (loc.includes('tool') || loc.includes('tstm') || loc.includes('mold')) return deptMap['engineering tstm'] || 7;
-        if (loc.includes('maint') || loc.includes('mtc')) return deptMap['maintenance'] || 8;
-        if (loc.includes('qc') || loc.includes('quality') || loc.includes('cmm')) return deptMap['qc'] || 9;
-        if (loc.includes('ict') || loc.includes('it') || loc.includes('edp')) return deptMap['ict'] || 10;
-        if (loc.includes('ppic')) return deptMap['ppic'] || 11;
-        if (loc.includes('prod') || loc.includes('manufactur') || loc.includes('shopfloor') || loc.includes('fa')) return deptMap['produksi'] || 12;
-    }
+    const fromLoc = mapDeptStringToId(loc, deptMap);
+    if (fromLoc) return fromLoc;
 
     // Priority 4: Device Hostname prefix
     if (name.startsWith('ppic') || name.includes('-ppic')) return deptMap['ppic'] || 11;
@@ -148,19 +141,20 @@ async function syncAssetEverywhere(asset, db) {
                     if (d.name) deptMap[d.name.toLowerCase().trim()] = d.id;
                 }
 
-                // Resolve user department & PIC Name
-                let userDept = '';
+                // Resolve user department & PIC Name (explicit asset.department -> HR -> User -> Asset location)
+                let userDept = asset.department && asset.department.trim() !== '' ? asset.department.trim() : '';
                 let picName = '';
                 if (asset.hr_employee_id) {
                     const hr = await db('hr_employees').where('id', asset.hr_employee_id).first().catch(() => null);
-                    if (hr && hr.department) userDept = hr.department;
+                    if (!userDept && hr && hr.department && hr.department.toLowerCase() !== 'general') userDept = hr.department;
                     if (hr && hr.name) picName = hr.name;
                 }
-                if (!userDept && asset.user_id) {
+                if (asset.user_id) {
                     const u = await db('users').where('id', asset.user_id).first().catch(() => null);
-                    if (u && u.department) userDept = u.department;
-                    if (u && u.name) picName = u.name;
+                    if (!userDept && u && u.department && u.department.toLowerCase() !== 'general') userDept = u.department;
+                    if (!picName && u && u.name) picName = u.name;
                 }
+                const authoritativeDeptId = mapDeptStringToId(userDept, deptMap);
                 if (!userDept && asset.location) userDept = asset.location;
 
                 const resolvedDeptId = resolveDepartmentId(userDept, asset.location, `${asset.contact || ''} ${picName}`, asset.name, deptMap);
@@ -173,7 +167,10 @@ async function syncAssetEverywhere(asset, db) {
                     pin = await generateUniquePin(db);
                 }
 
-                if (!existingQuota) {
+                // Skip auto-creating Ricoh quota for unassigned assets that are In Repair
+                const isUnassignedRepair = String(asset.status || '').toLowerCase().includes('repair') && !asset.user_id && !asset.hr_employee_id;
+
+                if (!existingQuota && !isUnassignedRepair) {
                     await db('ricoh_device_quotas').insert({
                         computer_name: asset.name,
                         ip_address: asset.ip_address || '',
@@ -190,7 +187,11 @@ async function syncAssetEverywhere(asset, db) {
                         lifetime_copier_bw: 0,
                         lifetime_copier_color: 0,
                         monthly_quota_copier: 200,
+                        monthly_quota_copier_bw: 160,
+                        monthly_quota_copier_color: 40,
                         copier_status: 'active',
+                        copier_bw_status: 'active',
+                        copier_color_status: 'active',
                         user_code: pin,
                         status: 'active',
                         asset_id: asset.id,
@@ -207,9 +208,10 @@ async function syncAssetEverywhere(asset, db) {
                         updatePayload.user_code = pin;
                         console.log(`[SYNC] Auto-generated PIN for existing ${asset.name}: ${pin}`);
                     }
-                    // Permanent lock: only assign department if existing quota does not have one yet
-                    if (!existingQuota.department_id && resolvedDeptId) {
-                        updatePayload.department_id = resolvedDeptId;
+                    // Sync department when missing OR when HR/User department explicitly changed
+                    const targetDeptId = authoritativeDeptId || (!existingQuota.department_id ? resolvedDeptId : null);
+                    if (targetDeptId && Number(existingQuota.department_id) !== Number(targetDeptId)) {
+                        updatePayload.department_id = targetDeptId;
                     }
                     await db('ricoh_device_quotas').where('id', existingQuota.id).update(updatePayload);
                 }

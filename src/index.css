@@ -145,4 +145,140 @@ body {
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
         border-color: #CBD5E1;
     }
-}
+}
+
+/* ==========================================================================
+   ENTERPRISE DARK THEME ENGINE
+   Provides seamless, eye-friendly contrast for the entire application canvas.
+   ========================================================================== */
+html.dark {
+    color-scheme: dark;
+}
+
+html.dark body {
+    background-color: #030712 !important;
+    color: #f1f5f9 !important;
+}
+
+/* Base Cards & Containers */
+html.dark .bg-white,
+html.dark .bg-white\/90,
+html.dark .bg-white\/80,
+html.dark .bg-white\/70,
+html.dark .bg-white\/60 {
+    background-color: #0b132b !important;
+    color: #f8fafc !important;
+}
+
+html.dark .bg-gradient-to-br.to-white {
+    background-image: none !important;
+    background-color: #0f172a !important;
+}
+
+html.dark .border-white\/40,
+html.dark .border-white\/50 {
+    border-color: #1e293b !important;
+}
+
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/50,
+html.dark .bg-slate-50\/80,
+html.dark .bg-gray-50,
+html.dark .bg-\[\#FAFBFD\],
+html.dark .bg-\[\#F6F7F9\] {
+    background-color: #030712 !important;
+}
+
+html.dark .bg-slate-100,
+html.dark .bg-slate-100\/50,
+html.dark .bg-gray-100 {
+    background-color: #111c3a !important;
+}
+
+html.dark .bg-slate-200 {
+    background-color: #1e293b !important;
+}
+
+html.dark .shadow-indigo-200,
+html.dark .shadow-blue-200,
+html.dark .shadow-red-200 {
+    --tw-shadow-color: rgba(15, 23, 42, 0.6) !important;
+}
+
+html.dark .shopfloor-card,
+html.dark .card-unifi,
+html.dark .premium-card {
+    background-color: #0b132b !important;
+    border-color: #1e293b !important;
+    color: #f8fafc !important;
+}
+
+/* Borders & Dividers */
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-slate-300,
+html.dark .border-gray-100,
+html.dark .border-gray-200 {
+    border-color: #1e293b !important;
+}
+
+html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+html.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+    border-color: #1e293b !important;
+}
+
+/* Text Colors */
+html.dark .text-slate-900,
+html.dark .text-slate-800,
+html.dark .text-gray-900,
+html.dark .text-gray-800 {
+    color: #f8fafc !important;
+}
+
+html.dark .text-slate-700,
+html.dark .text-slate-600,
+html.dark .text-gray-700,
+html.dark .text-gray-600 {
+    color: #cbd5e1 !important;
+}
+
+html.dark .text-slate-500 {
+    color: #94a3b8 !important;
+}
+
+/* Form Inputs, Selects & Textareas */
+html.dark input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+html.dark select,
+html.dark textarea {
+    background-color: #070d1e !important;
+    border-color: #334155 !important;
+    color: #f8fafc !important;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+    color: #64748b !important;
+}
+
+/* Hover States & Table Rows */
+html.dark .hover\:bg-slate-50:hover,
+html.dark .hover\:bg-gray-50:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Scrollbar Dark Styling */
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #334155 !important;
+}
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #475569 !important;
+}
+
+/* Print Overrides: Strictly Clean White for Ink Efficiency */
+@media print {
+    html.dark, html.dark body, html.dark .bg-white, html.dark div {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
+}
+
