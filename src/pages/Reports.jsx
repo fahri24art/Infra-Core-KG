@@ -11,14 +11,22 @@ import axios from 'axios';
 
 export default function Reports() {
     const [searchParams, setSearchParams] = useSearchParams();
-    const [activeTab, setActiveTab] = useState('scorecard'); // 'scorecard' | 'charts'
+    const initialTab = searchParams.get('tab');
+    const [activeTab, setActiveTab] = useState(['scorecard', 'local', 'charts'].includes(initialTab) ? initialTab : 'scorecard');
     const [checksheets, setChecksheets] = useState([]);
     const [assets, setAssets] = useState([]);
     const [networkStats, setNetworkStats] = useState(null);
     const [securityIntel, setSecurityIntel] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    const [year, setYear] = useState(new Date().getFullYear());
+    const curYear = new Date().getFullYear();
+    const initialYear = parseInt(searchParams.get('year'), 10);
+    const [year, setYear] = useState(!Number.isNaN(initialYear) && initialYear >= 2020 ? initialYear : curYear);
+    const [availableYears, setAvailableYears] = useState(() => {
+        const list = [];
+        for (let y = 2025; y <= curYear + 2; y++) list.push(y);
+        return list;
+    });
     const [monthlyMaintKpi, setMonthlyMaintKpi] = useState([]);
     const [totalAssets, setTotalAssets] = useState(0);
     const [monthlyUptimeKpi, setMonthlyUptimeKpi] = useState([]);
@@ -26,6 +34,7 @@ export default function Reports() {
     const [monthlyIspKpi, setMonthlyIspKpi] = useState([]);
     const [monthlyTicketsKpi, setMonthlyTicketsKpi] = useState([]);
     const [localKpiCategories, setLocalKpiCategories] = useState([]);
+    const [localKpiGroups, setLocalKpiGroups] = useState({});
     const [digitalizationData, setDigitalizationData] = useState([]);
     const [reviewIkData, setReviewIkData] = useState([]);
 
@@ -55,6 +64,18 @@ export default function Reports() {
         fetchData();
         fetchKpiData();
     }, [year]);
+
+    useEffect(() => {
+        const org = JSON.parse(sessionStorage.getItem('user') || '{}')?.organization || 'TCF-SG';
+        fetch(`/api/network/kpi-years?organization=${org}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (d && Array.isArray(d.years) && d.years.length > 0) {
+                    setAvailableYears(d.years);
+                }
+            })
+            .catch(() => {});
+    }, []);
 
     const fetchKpiData = async () => {
         try {
@@ -87,6 +108,7 @@ export default function Reports() {
             if (localRes.ok) {
                 const localData = await localRes.json();
                 setLocalKpiCategories(localData.categories || []);
+                setLocalKpiGroups(localData.groups || {});
             }
 
             // Populate Digitalization & Review IK from overrides
@@ -204,7 +226,7 @@ export default function Reports() {
                     {/* View Switcher Tabs */}
                     <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-xs">
                         <button
-                            onClick={() => setActiveTab('scorecard')}
+                            onClick={() => { setActiveTab('scorecard'); setSearchParams({ tab: 'scorecard', year: String(year) }); }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
                                 activeTab === 'scorecard'
                                     ? 'bg-white text-blue-600 shadow-sm'
@@ -215,7 +237,7 @@ export default function Reports() {
                             Scorecard Matriks (Management KPI)
                         </button>
                         <button
-                            onClick={() => setActiveTab('local')}
+                            onClick={() => { setActiveTab('local'); setSearchParams({ tab: 'local', year: String(year) }); }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
                                 activeTab === 'local'
                                     ? 'bg-white text-amber-600 shadow-sm'
@@ -223,10 +245,10 @@ export default function Reports() {
                             }`}
                         >
                             <Layers size={15} />
-                            KPI Local (AP, Ricoh & Lokal)
+                            KPI Infra (Network • Server • Tools)
                         </button>
                         <button
-                            onClick={() => setActiveTab('charts')}
+                            onClick={() => { setActiveTab('charts'); setSearchParams({ tab: 'charts', year: String(year) }); }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
                                 activeTab === 'charts'
                                     ? 'bg-white text-blue-600 shadow-sm'
@@ -238,15 +260,19 @@ export default function Reports() {
                         </button>
                     </div>
 
-                    {/* Statistical Period Year Selector */}
+                    {/* Statistical Period Year Selector (Dynamic Multi-Year) */}
                     <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-2xl border border-[#E1E1E1] shadow-xs">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Periode:</span>
                         <select
                             value={year}
-                            onChange={(e) => setYear(Number(e.target.value))}
+                            onChange={(e) => {
+                                const nextY = Number(e.target.value);
+                                setYear(nextY);
+                                setSearchParams({ tab: activeTab, year: String(nextY) });
+                            }}
                             className="bg-transparent border-none text-slate-900 font-black text-sm outline-none cursor-pointer focus:ring-0"
                         >
-                            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 1 + i).map(y => (
+                            {availableYears.map(y => (
                                 <option key={y} value={y}>{y}</option>
                             ))}
                         </select>
@@ -281,6 +307,7 @@ export default function Reports() {
                         <KPILocalTab
                             year={year}
                             localKpiData={localKpiCategories}
+                            localKpiGroups={localKpiGroups}
                             onRefresh={fetchKpiData}
                             onToggleExcludeTicket={handleToggleExcludeTicket}
                         />

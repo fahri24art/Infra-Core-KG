@@ -19,6 +19,23 @@ const SERVER_GLOBAL_PATTERNS = [
     'vendor center',
 ];
 
+const INFRA_MODULE_DEFS = [
+    // NETWORK
+    { id: 'net_isp', group: 'network', groupLabel: 'Network', title: 'ISP / Internet WAN (iForte & Comtronic)', subtitle: 'ISP iForte, ISP Comtronic / Comnet WAN Links' },
+    { id: 'net_ap', group: 'network', groupLabel: 'Network', title: 'Access Point (Wi-Fi Pabrik & Kantor)', subtitle: 'AP-OfficeLt1/2, AP-PPIC, AP-Mess, AGV-AP, AP-MC-Sharing, Progresif' },
+    { id: 'net_core', group: 'network', groupLabel: 'Network', title: 'Core Switch, Router & LAN', subtitle: 'Switch Center 1/2, Router MikroTik, DNS/GW, Network Core' },
+    // SERVER (Global & Local)
+    { id: 'srv_idempiere', group: 'server', groupLabel: 'Server', title: 'ERP iDempiere (Prod & Center)', subtitle: 'idem Prod, Idempiere Center' },
+    { id: 'srv_shopfloor', group: 'server', groupLabel: 'Server', title: 'Shopfloor & Production MES', subtitle: 'Shopfloor Center, Shopfloor Center Production' },
+    { id: 'srv_hris', group: 'server', groupLabel: 'Server', title: 'HRIS & Attendance Server', subtitle: 'HRIS Center, Absensi / HR Portal' },
+    { id: 'srv_vendor', group: 'server', groupLabel: 'Server', title: 'Vendor Portal Server', subtitle: 'Vendor Center' },
+    { id: 'srv_factoryhub', group: 'server', groupLabel: 'Server', title: 'FactoryHub Portal', subtitle: 'FactoryHub, Factory Hub (Local)' },
+    { id: 'srv_portal_local', group: 'server', groupLabel: 'Server', title: 'Web Compro, Helpdesk & Local Server', subtitle: 'Compro-Website, Helpdesk Center, Server-Local, Infra-Guard (Local)' },
+    // TOOLS
+    { id: 'tools_ricoh', group: 'tools', groupLabel: 'Tools', title: 'Mesin Fotokopi / Printer Ricoh', subtitle: 'MC-PhotoCopy Office Atas, PPIC & Umum' },
+    { id: 'tools_other', group: 'tools', groupLabel: 'Tools', title: 'CCTV / NVR & Perangkat Tools Lain', subtitle: 'NVR CCTV, Fingerprint, Scanner, Andon Display', optional: true },
+];
+
 const INTERNET_IFORTE_PATTERNS = ['iforte', 'isp iforte'];
 const INTERNET_COMNET_PATTERNS = ['comtronic', 'comnet', 'isp comtronic', 'isp comnet'];
 
@@ -102,7 +119,7 @@ function classifyTicketCategory(ticket) {
 
     const isAutoIncident =
         /-IR-/i.test(num) ||
-        /^ICT-2026\d{4}-/i.test(num) ||
+        /^ICT-20\d{2}\d{4}-/i.test(num) ||
         /\[(AUTO-ALERT|LATENCY-ALERT|INFRA-GUARD)\]/i.test(sub) ||
         src === 'Infra Guard';
 
@@ -139,6 +156,69 @@ function classifyTicketCategory(ticket) {
     }
 
     return 'local_network';
+}
+
+/**
+ * Fine-grained classification for Infrastructure Telemetry & SLA grouped into Network / Server / Tools
+ */
+function classifyInfraDetail(ticket) {
+    const baseCat = classifyTicketCategory(ticket);
+    if (baseCat === 'helpdesk' || baseCat === 'ignore_hw_agent' || baseCat === 'ignore_test') {
+        return null;
+    }
+
+    const sub = String(ticket.subject || '');
+    const target = extractMonitorTarget(sub);
+    const alertKind = /\[LATENCY-ALERT\]/i.test(sub) ? 'latency' : 'down';
+
+    // 1. TOOLS
+    if (baseCat === 'local_ricoh' || target.includes('photocopy') || target.includes('ricoh') || target.includes('printer')) {
+        return { domainGroup: 'tools', moduleId: 'tools_ricoh', alertKind };
+    }
+    if (target.includes('cctv') || target.includes('nvr') || target.includes('finger') || target.includes('andon') || target.includes('scanner')) {
+        return { domainGroup: 'tools', moduleId: 'tools_other', alertKind };
+    }
+
+    // 2. NETWORK
+    if (baseCat === 'internet_iforte' || baseCat === 'internet_comnet') {
+        return { domainGroup: 'network', moduleId: 'net_isp', alertKind };
+    }
+    if (baseCat === 'local_ap' || target.includes('wifi') || target.includes('unifi')) {
+        return { domainGroup: 'network', moduleId: 'net_ap', alertKind };
+    }
+
+    // 3. SERVER (Global + Local app servers)
+    if (target.includes('idem') || target.includes('idempiere')) {
+        return { domainGroup: 'server', moduleId: 'srv_idempiere', alertKind };
+    }
+    if (target.includes('shopfloor')) {
+        return { domainGroup: 'server', moduleId: 'srv_shopfloor', alertKind };
+    }
+    if (target.includes('hris') || target.includes('absen')) {
+        return { domainGroup: 'server', moduleId: 'srv_hris', alertKind };
+    }
+    if (target.includes('vendor')) {
+        return { domainGroup: 'server', moduleId: 'srv_vendor', alertKind };
+    }
+    if (target.includes('factoryhub') || target.includes('factory hub')) {
+        return { domainGroup: 'server', moduleId: 'srv_factoryhub', alertKind };
+    }
+    if (
+        baseCat === 'server_global' ||
+        target.includes('compro') ||
+        target.includes('helpdesk') ||
+        target.includes('server') ||
+        target.includes('infra-guard') ||
+        target.includes('infraguard') ||
+        target.includes('power asset') ||
+        target.includes('proxmox') ||
+        target.includes('nas')
+    ) {
+        return { domainGroup: 'server', moduleId: 'srv_portal_local', alertKind };
+    }
+
+    // 4. Default remaining infrastructure -> Core Network
+    return { domainGroup: 'network', moduleId: 'net_core', alertKind };
 }
 
 /**
@@ -247,6 +327,7 @@ function computeMonthlyUptimeFromTickets({
                 number: t.number,
                 subject: t.subject,
                 target: extractMonitorTarget(t.subject),
+                alert_kind: /\[LATENCY-ALERT\]/i.test(String(t.subject || '')) ? 'latency' : 'down',
                 status: t.status,
                 created_at: t.created_at,
                 updated_at: t.updated_at,
@@ -267,6 +348,10 @@ function computeMonthlyUptimeFromTickets({
             win.totalMinutes > 0
                 ? ((uptimeMinutes / win.totalMinutes) * 100).toFixed(2)
                 : '0.00';
+        const activeIncidents = incidents.filter((x) => !x.excluded);
+        const downCount = activeIncidents.filter((x) => x.alert_kind === 'down').length;
+        const latencyCount = activeIncidents.filter((x) => x.alert_kind === 'latency').length;
+        const mttrMinutes = activeIncidents.length > 0 ? Math.round(downtimeMinutes / activeIncidents.length) : 0;
 
         monthly.push({
             month: m,
@@ -274,7 +359,10 @@ function computeMonthlyUptimeFromTickets({
             downtime_minutes: downtimeMinutes,
             uptime_minutes: uptimeMinutes,
             percentage: pct,
-            incident_count: incidents.filter((x) => !x.excluded).length,
+            incident_count: activeIncidents.length,
+            down_count: downCount,
+            latency_count: latencyCount,
+            mttr_minutes: mttrMinutes,
             incidents,
             isFuture: false,
             isCurrent: win.isCurrent,
@@ -346,8 +434,10 @@ async function recordInfraGuardIspTicket(db, { shortName, name, interfaceName, g
 }
 
 module.exports = {
+    INFRA_MODULE_DEFS,
     getMonthWindowWIB,
     classifyTicketCategory,
+    classifyInfraDetail,
     extractMonitorTarget,
     mergeIntervals,
     resolveTicketInterval,

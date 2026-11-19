@@ -25,7 +25,7 @@ function isSystemTicket(t) {
     const src = String(t.source || '').toLowerCase();
     const cat = String(t.category || '').toLowerCase();
     
-    if (num.includes('-IR-') || num.includes('-HW-') || num.startsWith('ICT-2026') || num.includes('IR-') || num.includes('HW-')) return true;
+    if (num.includes('-IR-') || num.includes('-HW-') || /^ICT-20\d{2}/i.test(num) || num.includes('IR-') || num.includes('HW-')) return true;
     if (subj.startsWith('[AUTO-ALERT]') || subj.startsWith('[AUTO-LOG]') || subj.toLowerCase().includes('uptime kuma') || subj.toLowerCase().includes('wireguard') || subj.toLowerCase().includes('hardware upgrade')) return true;
     if (desc.toLowerCase().startsWith('uptime kuma') || desc.toLowerCase().includes('wireguard mendeteksi') || desc.toLowerCase().includes('tcf agent mendeteksi')) return true;
     if (src === 'system' || src === 'monitoring' || cat === 'monitoring' || cat === 'hardware upgrade') return true;

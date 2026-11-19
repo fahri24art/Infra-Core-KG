@@ -127,7 +127,7 @@ function isPublicRoute(req) {
     if (method === 'GET') {
         if (cleanUrl === '/api/portal/public-assets-status' || cleanUrl === '/api/network/portal/public-assets-status') return true;
         if (cleanUrl === '/api/ricoh/devices/status' || cleanUrl === '/api/ricoh/departments' || cleanUrl === '/api/ricoh/logs' || cleanUrl === '/api/ricoh/devices/quotas' || cleanUrl === '/api/ricoh/executive-summary' || cleanUrl === '/api/ricoh/monthly-stats' || cleanUrl === '/api/ricoh/monthly-logs' || cleanUrl === '/api/ricoh/custom-range-logs' || cleanUrl === '/api/ricoh/management-report-data' || cleanUrl === '/api/ricoh/jobs') return true;
-        if (cleanUrl === '/api/network/dashboard' || cleanUrl === '/api/network/isp-bandwidth-monthly' || cleanUrl === '/api/network/uptime-monthly' || cleanUrl === '/api/network/maintenance/monthly-kpi') return true;
+        if (cleanUrl === '/api/network/dashboard' || cleanUrl === '/api/network/isp-bandwidth-monthly' || cleanUrl === '/api/network/uptime-monthly' || cleanUrl === '/api/network/local-kpi' || cleanUrl === '/api/network/kpi-years' || cleanUrl === '/api/network/maintenance/monthly-kpi') return true;
         if (cleanUrl === '/api/network/tickets/analytics/dashboard' || cleanUrl === '/api/tickets/analytics/dashboard') return true;
         if (cleanUrl === '/api/network/tickets/resolution-kpi' || cleanUrl === '/api/tickets/resolution-kpi') return true;
         if (cleanUrl === '/api/hr/rooms' || cleanUrl === '/api/hr/rooms/bookings' || cleanUrl === '/api/hr/dashboard/summary') return true;

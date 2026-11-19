@@ -2,7 +2,12 @@ const express = require('express');
 const router = express.Router();
 const mikrotik = require('../services/mikrotik');
 const db = require('../db');
-const { computeMonthlyUptimeFromTickets, getMonthWindowWIB } = require('../utils/kpiTime');
+const {
+    INFRA_MODULE_DEFS,
+    classifyInfraDetail,
+    computeMonthlyUptimeFromTickets,
+    getMonthWindowWIB
+} = require('../utils/kpiTime');
 
 // Middleware to load config
 const loadConfig = async (req, res, next) => {
@@ -222,7 +227,7 @@ async function fetchYearIncidentContext(activeDb, year) {
         .where('created_at', '<', endYearIso)
         .where(function () {
             this.where('number', 'like', '%-IR-%')
-                .orWhere('number', 'like', 'ICT-2026%')
+                .orWhere('number', 'like', 'ICT-20%')
                 .orWhere('subject', 'like', '%[AUTO-ALERT]%')
                 .orWhere('subject', 'like', '%[LATENCY-ALERT]%')
                 .orWhere('subject', 'like', '%[INFRA-GUARD]%')
@@ -366,39 +371,137 @@ router.get('/isp-bandwidth-monthly', async (req, res) => {
     }
 });
 
-// GET /api/network/local-kpi?year=2026 - KPI Local (AP Wi-Fi, Mesin Ricoh, Switch/Server Lokal)
+// GET /api/network/kpi-years - Dynamic available KPI years based on DB history & future planning horizon
+router.get('/kpi-years', async (req, res) => {
+    try {
+        const activeDb = req.db || db;
+        const curYear = new Date().getFullYear();
+        const yearSet = new Set();
+        for (let y = 2025; y <= curYear + 2; y++) yearSet.add(y);
+
+        try {
+            const ovYears = await activeDb('kpi_overrides').distinct('year');
+            ovYears.forEach(r => { const n = Number(r.year); if (n >= 2020 && n <= 2100) yearSet.add(n); });
+        } catch (e) {}
+
+        try {
+            const mYears = await activeDb('maintenance_records').distinct('year');
+            mYears.forEach(r => { const n = Number(r.year); if (n >= 2020 && n <= 2100) yearSet.add(n); });
+        } catch (e) {}
+
+        try {
+            const tBounds = await activeDb('tickets').select(activeDb.raw('MIN(created_at) as min_d, MAX(created_at) as max_d')).first();
+            if (tBounds?.min_d) {
+                const minY = new Date(tBounds.min_d).getFullYear();
+                const maxY = tBounds.max_d ? new Date(tBounds.max_d).getFullYear() : curYear;
+                for (let y = Math.max(2020, minY); y <= Math.max(curYear + 2, maxY); y++) yearSet.add(y);
+            }
+        } catch (e) {}
+
+        res.json({ currentYear: curYear, years: Array.from(yearSet).sort((a, b) => a - b) });
+    } catch (e) {
+        const curYear = new Date().getFullYear();
+        res.json({ currentYear: curYear, years: [curYear - 1, curYear, curYear + 1, curYear + 2] });
+    }
+});
+
+// Helper: Aggregate YTD SLA metrics across an array of monthly rows
+function summarizeMonthlySlice(monthly = []) {
+    let totalMinutes = 0;
+    let uptimeMinutes = 0;
+    let downtimeMinutes = 0;
+    let incidentCount = 0;
+    let downCount = 0;
+    let latencyCount = 0;
+    monthly.forEach(m => {
+        if (!m.isFuture && m.total_minutes > 0) {
+            totalMinutes += Number(m.total_minutes) || 0;
+            uptimeMinutes += Number(m.uptime_minutes) || 0;
+            downtimeMinutes += Number(m.downtime_minutes) || 0;
+            incidentCount += Number(m.incident_count) || 0;
+            downCount += Number(m.down_count) || 0;
+            latencyCount += Number(m.latency_count) || 0;
+        }
+    });
+    const pct = totalMinutes > 0 ? Number(((uptimeMinutes / totalMinutes) * 100).toFixed(2)) : 0;
+    const mttrMinutes = incidentCount > 0 ? Math.round(downtimeMinutes / incidentCount) : 0;
+    return { totalMinutes, uptimeMinutes, downtimeMinutes, incidentCount, downCount, latencyCount, mttrMinutes, pct };
+}
+
+// GET /api/network/local-kpi?year=YYYY - Infrastructure Telemetry & SLA grouped into Network, Server & Tools
 router.get('/local-kpi', async (req, res) => {
     try {
         const activeDb = req.db || db;
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const { tickets, excludedSet } = await fetchYearIncidentContext(activeDb, year);
 
-        const ricoh = computeMonthlyUptimeFromTickets({
-            tickets,
-            year,
-            categoryPredicate: (cat) => cat === 'local_ricoh',
-            excludedSet,
-        });
-        const ap = computeMonthlyUptimeFromTickets({
-            tickets,
-            year,
-            categoryPredicate: (cat) => cat === 'local_ap',
-            excludedSet,
-        });
-        const networkLocal = computeMonthlyUptimeFromTickets({
-            tickets,
-            year,
-            categoryPredicate: (cat) => cat === 'local_network',
-            excludedSet,
-        });
+        // Classify all tickets once
+        const classifiedCache = new Map();
+        const getDetail = (t) => {
+            if (!classifiedCache.has(t.id)) {
+                classifiedCache.set(t.id, classifyInfraDetail(t));
+            }
+            return classifiedCache.get(t.id);
+        };
+
+        const categories = [];
+        for (const def of INFRA_MODULE_DEFS) {
+            const monthly = computeMonthlyUptimeFromTickets({
+                tickets,
+                year,
+                categoryPredicate: (_, t) => getDetail(t)?.moduleId === def.id,
+                excludedSet,
+            });
+            const summary = summarizeMonthlySlice(monthly);
+            if (def.optional && summary.incidentCount === 0) continue;
+            categories.push({
+                id: def.id,
+                group: def.group,
+                groupLabel: def.groupLabel,
+                title: def.title,
+                subtitle: def.subtitle,
+                monthly,
+                summary,
+            });
+        }
+
+        // Compute group summaries (Network, Server, Tools) using merged intervals at group level + module averages
+        const groups = {};
+        for (const grpKey of ['network', 'server', 'tools']) {
+            const grpModules = categories.filter(c => c.group === grpKey);
+            const mergedGroupMonthly = computeMonthlyUptimeFromTickets({
+                tickets,
+                year,
+                categoryPredicate: (_, t) => getDetail(t)?.domainGroup === grpKey,
+                excludedSet,
+            });
+            const mergedStats = summarizeMonthlySlice(mergedGroupMonthly);
+            const activeModScores = grpModules.map(m => m.summary.pct).filter(p => p > 0);
+            const avgModulePct = activeModScores.length > 0
+                ? Number((activeModScores.reduce((a, b) => a + b, 0) / activeModScores.length).toFixed(2))
+                : 0;
+            const totalInc = grpModules.reduce((s, m) => s + m.summary.incidentCount, 0);
+            const totalDownInc = grpModules.reduce((s, m) => s + m.summary.downCount, 0);
+            const totalLatInc = grpModules.reduce((s, m) => s + m.summary.latencyCount, 0);
+            const totalDownMin = grpModules.reduce((s, m) => s + m.summary.downtimeMinutes, 0);
+            groups[grpKey] = {
+                id: grpKey,
+                moduleCount: grpModules.length,
+                avgPct: avgModulePct,
+                mergedPct: mergedStats.pct,
+                incidentCount: totalInc,
+                downCount: totalDownInc,
+                latencyCount: totalLatInc,
+                downtimeMinutes: totalDownMin,
+                mttrMinutes: totalInc > 0 ? Math.round(totalDownMin / totalInc) : 0,
+                monthly: mergedGroupMonthly,
+            };
+        }
 
         res.json({
             year,
-            categories: [
-                { id: 'local_ricoh', title: 'Mesin Fotokopi / Printer Ricoh', subtitle: 'MC-PhotoCopy Office Atas, PPIC & Umum', monthly: ricoh },
-                { id: 'local_ap', title: 'Access Point (Wi-Fi Pabrik & Kantor)', subtitle: 'AP-OfficeLt1/2, AP-PPIC, AP-Mess, AGV-AP, MC-Sharing, Progresif', monthly: ap },
-                { id: 'local_network', title: 'Switch, Router & Server Lokal', subtitle: 'Switch Center 1/2, Router MikroTik, DNS/GW Wi-Fi, Server-Local, Network', monthly: networkLocal },
-            ],
+            groups,
+            categories,
         });
     } catch (e) {
         console.error("Local KPI error:", e);
