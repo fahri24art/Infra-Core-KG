@@ -477,8 +477,8 @@ export default function KPIScorecardTable({
             </div>
 
             {/* Matrix Table - 1-Page Compact Responsive Fit */}
-            <div className="overflow-x-auto w-full custom-scrollbar">
-                <table className="w-full border-collapse text-left font-sans text-[11px]">
+            <div className="kpi-scroll-wrap overflow-x-auto w-full custom-scrollbar">
+                <table className="kpi-compact-table w-full border-collapse text-left font-sans text-[11px]">
                     <thead>
                         <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-tight whitespace-nowrap">
                             <th className="py-2.5 px-1.5 w-7 text-center border-r border-slate-200">No</th>
@@ -491,7 +491,7 @@ export default function KPIScorecardTable({
                                 </th>
                             ))}
                             <th className="py-2.5 px-1.5 text-center border-r border-slate-200">YTD</th>
-                            <th className="py-2.5 px-1.5 text-center">Status</th>
+                            <th className="py-2.5 px-2 text-center min-w-[76px]">Status</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">

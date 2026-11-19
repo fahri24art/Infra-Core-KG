@@ -272,8 +272,8 @@ export default function KPILocalTab({
                                 </div>
                             </div>
 
-                            <div className="overflow-x-auto w-full custom-scrollbar">
-                                <table className="w-full text-left text-xs border-collapse">
+                            <div className="kpi-scroll-wrap overflow-x-auto w-full custom-scrollbar">
+                                <table className="kpi-compact-table w-full text-left text-xs border-collapse">
                                     <thead>
                                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] font-black uppercase whitespace-nowrap">
                                             <th className="py-2 px-3 w-32 border-r border-slate-200">Metrik</th>

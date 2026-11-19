@@ -274,12 +274,17 @@ input[placeholder*="Search"]:focus {
    6. TABLE CARD, PROGRESS BARS, TOTAL BOX & BADGES (DESKTOP)
    ========================================================================== */
 .premium-card,
-div:has(> table):not(.force-dark-table) {
+div:has(> table):not(.force-dark-table):not(.kpi-scroll-wrap) {
   background: #ffffff !important;
   border: 1px solid #e2e8f0 !important;
   border-radius: 20px !important;
   box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.02) !important;
   overflow: hidden !important;
+}
+
+div.kpi-scroll-wrap {
+  overflow-x: auto !important;
+  overflow-y: visible !important;
 }
 
 /* Table header bar */
@@ -289,12 +294,12 @@ div:has(> h4:first-child):has(> span:last-child) {
   border-bottom: 1px solid #e2e8f0 !important;
 }
 
-table:not(.force-dark-table):not(.compact-matrix) thead tr {
+table:not(.force-dark-table):not(.compact-matrix):not(.kpi-compact-table) thead tr {
   background: #f8fafc !important;
   border-bottom: 2px solid #e2e8f0 !important;
 }
 
-table:not(.force-dark-table):not(.compact-matrix) thead th {
+table:not(.force-dark-table):not(.compact-matrix):not(.kpi-compact-table) thead th {
   padding: 0.85rem 1.5rem !important;
   font-size: 0.68rem !important;
   letter-spacing: 0.08em !important;
@@ -303,18 +308,18 @@ table:not(.force-dark-table):not(.compact-matrix) thead th {
   text-transform: uppercase !important;
 }
 
-table:not(.force-dark-table):not(.compact-matrix) tbody tr {
+table:not(.force-dark-table):not(.compact-matrix):not(.kpi-compact-table) tbody tr {
   background: #ffffff !important;
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
   border-bottom: 1px solid #f1f5f9 !important;
 }
 
-table:not(.force-dark-table):not(.compact-matrix) tbody tr:hover {
+table:not(.force-dark-table):not(.compact-matrix):not(.kpi-compact-table) tbody tr:hover {
   background: #f8fafc !important;
   box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.06) !important;
 }
 
-table:not(.force-dark-table):not(.compact-matrix) tbody td {
+table:not(.force-dark-table):not(.compact-matrix):not(.kpi-compact-table) tbody td {
   padding: 1rem 1.5rem !important;
 }
 
@@ -744,7 +749,7 @@ html.dark h3.text-xl.font-black:not(.text-white) {
   color: #f8fafc !important;
 }
 html.dark .premium-card,
-html.dark div:has(> table):not(.force-dark-table) {
+html.dark div:has(> table):not(.force-dark-table):not(.kpi-scroll-wrap) {
   background: #0b132b !important;
   border-color: #1e293b !important;
   color: #f8fafc !important;
